@@ -1,0 +1,27 @@
+[package]
+name = "uuun"
+version = "0.1.0"
+edition = "2024"
+description = "Moog-style 8-voices polyphonic software synthesizer"
+repository = "https://github.com/eiri/uuun"
+keywords = ["audio", "synthesizer", "midi", "dsp", "music"]
+categories = ["multimedia::audio"]
+authors = ["Eric Avdey <eiri@eiri.ca>"]
+license = "MIT"
+
+[[bin]]
+name = "uuun"
+path = "src/main.rs"
+
+[dependencies]
+fundsp = { version = "0.23", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level   = 3
+lto         = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level   = 1 # enough for real-time audio even in dev builds
