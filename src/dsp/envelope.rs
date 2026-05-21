@@ -89,14 +89,13 @@ impl Envelope {
             }
 
             Stage::Attack => {
+                self.stage_samples += 1;
                 let dur = (params.attack * sr).max(1.0);
                 self.value = self.stage_samples as f64 / dur;
                 if self.value >= 1.0 {
                     self.value = 1.0;
                     self.stage = Stage::Decay;
                     self.stage_samples = 0;
-                } else {
-                    self.stage_samples += 1;
                 }
             }
 
@@ -132,6 +131,13 @@ impl Envelope {
         }
 
         self.value.clamp(0.0, 1.0)
+    }
+
+    /// Fill `buf[..n]` with envelope values and multiply for amplitude shaping.
+    pub fn process_mul(&mut self, buf: &mut [f64], n: usize, params: &AdsrParams) {
+        for s in buf[..n].iter_mut() {
+            *s *= self.tick(params);
+        }
     }
 
     /// Fill `buf[..n]` with envelope values.

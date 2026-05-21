@@ -6,7 +6,7 @@ use super::{
     oscillator::Waveform,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Patch {
     pub osc1_waveform: Waveform,
     /// Octave offset relative to the played MIDI note (-2 / +2).
@@ -90,7 +90,6 @@ impl Default for Patch {
                 sustain: 0.5,
                 release: 0.3,
             },
-
             amp_env: AdsrParams {
                 attack: 0.005,
                 decay: 0.1,

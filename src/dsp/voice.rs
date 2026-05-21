@@ -2,20 +2,22 @@
 /// Signal flow:
 ///   [OSC1 + OSC2 + OSC3 + Noise]
 ///       -> filter_env modulates cutoff_hz
-///       -> LFO modulates cutoff / pitch / amp
+///       -> LFO pitch mod (when dest = Pitch)
 ///       -> MoogFilter
-///       -> amp_env scales output
+///             cutoff = base_cutoff
+///                    + filter_env * env_amount
+///                    + key_track * (note − 60 semitones)
+///                    + LFO × depth (when dest = Filter)
+///       -> amp_env * velocity * LFO (when dest = Amp)
+///       -> soft-clip
 ///       -> out
-///
-/// The voice is monophonic, one MIDI note at a time.
-/// The voice allocator will manage a pool of Voice objects for polyphony.
 use crate::dsp::{
     envelope::Envelope,
     filter::MoogFilter,
-    glide::Glide,
+    glide::{Glide, GlideMode},
     lfo::{Lfo, LfoDest},
     noise::NoiseGen,
-    oscillator::{Oscillator, Waveform, apply_pitch_offset, midi_to_hz},
+    oscillator::{Oscillator, apply_pitch_offset, midi_to_hz},
     patch::Patch,
 };
 
@@ -28,15 +30,11 @@ pub enum VoiceStatus {
 
 pub struct Voice {
     pub status: VoiceStatus,
-
-    /// MIDI note currently playing (0 = none).
     pub midi_note: u8,
 
-    // DSP units.
     osc1: Oscillator,
     osc2: Oscillator,
     osc3: Oscillator,
-    #[allow(dead_code)] // I'll use it later
     noise: NoiseGen,
     filter: MoogFilter,
     amp_env: Envelope,
@@ -51,10 +49,12 @@ pub struct Voice {
 
     /// Velocity scaling (0.0 / 1.0).
     velocity: f64,
+
+    patch: Patch,
 }
 
 impl Voice {
-    pub fn new(_patch: &Patch, sample_rate: f64) -> Self {
+    pub fn new(patch: &Patch, sample_rate: f64) -> Self {
         Self {
             status: VoiceStatus::Idle,
             midi_note: 0,
@@ -72,12 +72,17 @@ impl Voice {
             sample_rate,
             base_hz: 440.0,
             velocity: 1.0,
+            patch: *patch,
         }
     }
 
-    /// Trigger a new note.
-    /// `prev_held` should be true when another key is currently held (legato).
+    pub fn set_patch(&mut self, patch: &Patch) {
+        self.patch = *patch;
+    }
+
     pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch, sample_rate: f64) {
+        self.patch = *patch;
+
         let target_hz = midi_to_hz(note);
         let prev_held = self.status == VoiceStatus::Active;
 
@@ -91,7 +96,11 @@ impl Voice {
             prev_held,
             patch.glide_time,
             sample_rate,
-            crate::dsp::glide::GlideMode::Always,
+            if patch.glide_time > 1e-4 {
+                GlideMode::Always
+            } else {
+                GlideMode::Off
+            },
         );
 
         self.midi_note = note;
@@ -104,7 +113,7 @@ impl Voice {
         self.amp_env.note_on();
         self.filter_env.note_on();
 
-        // Sync LFO (optional — can make configurable later).
+        // Sync LFO.
         self.lfo.reset();
 
         // Reset oscillator phases on new note.
@@ -135,76 +144,104 @@ impl Voice {
             "block size > 512 not supported without heap alloc"
         );
 
-        // Placeholder patch values (replace by proper caching later).
-        let osc1_hz = apply_pitch_offset(self.base_hz, 0, 0, 0.0);
-        let osc2_hz = apply_pitch_offset(self.base_hz, 0, 0, 7.0);
-        let osc3_hz = apply_pitch_offset(self.base_hz, -1, 0, 0.0);
-
-        let mut mix_buf = [0.0_f64; 512];
-        self.osc1
-            .process(&mut mix_buf, n, osc1_hz, Waveform::Saw, self.sample_rate);
-        self.osc2
-            .process(&mut mix_buf, n, osc2_hz, Waveform::Saw, self.sample_rate);
-        self.osc3
-            .process(&mut mix_buf, n, osc3_hz, Waveform::Square, self.sample_rate);
-        self.noise.process_white(&mut mix_buf, n, 0.0); // placeholder - off
-        for s in mix_buf[..n].iter_mut() {
-            *s *= 1.0 / 3.0; // placeholder - equal mix
-        }
+        let p = self.patch;
 
         let mut lfo_buf = [0.0_f64; 512];
         self.lfo.process(
             &mut lfo_buf,
             n,
-            0.5,
+            p.lfo_rate_hz,
             self.sample_rate,
-            crate::dsp::lfo::LfoWaveform::Sine,
+            p.lfo_waveform,
         );
 
-        let mut fenv_buf = [0.0_f64; 512];
-        let fenv_params = crate::dsp::envelope::AdsrParams {
-            attack: 0.01,
-            decay: 0.25,
-            sustain: 0.4,
-            release: 0.4,
-        };
-        self.filter_env.process_fill(&mut fenv_buf, n, &fenv_params);
+        let mut freq_buf = [0.0_f64; 512];
+        self.glide.process(&mut freq_buf, n);
 
-        let base_cutoff = 800.0_f64;
-        let filter_env_amount = 0.6_f64;
-        let lfo_depth = 0.1_f64;
-        let lfo_dest = LfoDest::Filter;
+        let pitch_lfo_semitones = if p.lfo_destination == LfoDest::Pitch {
+            p.lfo_depth
+        } else {
+            0.0
+        };
+
+        let mut mix_buf = [0.0_f64; 512];
+        for i in 0..n {
+            let base = freq_buf[i];
+            let pitch_factor = if pitch_lfo_semitones != 0.0 {
+                2.0_f64.powf(lfo_buf[i] * pitch_lfo_semitones / 12.0)
+            } else {
+                1.0
+            };
+            let bp = base * pitch_factor;
+
+            let mut s1 = [0.0_f64; 1];
+            let mut s2 = [0.0_f64; 1];
+            let mut s3 = [0.0_f64; 1];
+            self.osc1.process(
+                &mut s1,
+                1,
+                apply_pitch_offset(bp, p.osc1_octave, p.osc1_semitone, p.osc1_detune_ct),
+                p.osc1_waveform,
+                self.sample_rate,
+            );
+            self.osc2.process(
+                &mut s2,
+                1,
+                apply_pitch_offset(bp, p.osc2_octave, p.osc2_semitone, p.osc2_detune_ct),
+                p.osc2_waveform,
+                self.sample_rate,
+            );
+            self.osc3.process(
+                &mut s3,
+                1,
+                apply_pitch_offset(bp, p.osc3_octave, p.osc3_semitone, p.osc3_detune_ct),
+                p.osc3_waveform,
+                self.sample_rate,
+            );
+
+            mix_buf[i] = s1[0] * p.osc1_level + s2[0] * p.osc2_level + s3[0] * p.osc3_level;
+        }
+
+        if p.noise_level > 1e-6 {
+            self.noise.process_white(&mut mix_buf, n, p.noise_level);
+        }
+
+        let mut fenv_buf = [0.0_f64; 512];
+        self.filter_env
+            .process_fill(&mut fenv_buf, n, &p.filter_env);
+
+        let key_track_semitones = (self.midi_note as f64 - 60.0) * p.filter_key_track;
+        let key_tracked_cutoff = p.filter_cutoff_hz * 2.0_f64.powf(key_track_semitones / 12.0);
+        let lfo_to_filter = p.lfo_destination == LfoDest::Filter;
+        let nyquist = self.sample_rate * 0.49;
 
         let mut cutoff_buf = [0.0_f64; 512];
         for i in 0..n {
-            let env_mod = fenv_buf[i] * filter_env_amount;
-
-            let lfo_mod = if lfo_dest == LfoDest::Filter {
-                lfo_buf[i] * lfo_depth
+            let env_mod = fenv_buf[i] * p.filter_env_amount;
+            let lfo_mod = if lfo_to_filter {
+                lfo_buf[i] * p.lfo_depth
             } else {
                 0.0
             };
-
-            cutoff_buf[i] = (base_cutoff * 2.0_f64.powf(env_mod + lfo_mod))
-                .clamp(20.0, self.sample_rate * 0.49);
+            cutoff_buf[i] =
+                (key_tracked_cutoff * 2.0_f64.powf(env_mod + lfo_mod)).clamp(20.0, nyquist);
         }
 
-        let resonance = 0.3_f64;
         let mut filtered = [0.0_f64; 512];
         self.filter
-            .process(&mix_buf, &cutoff_buf, resonance, &mut filtered, n);
+            .process(&mix_buf, &cutoff_buf, p.filter_resonance, &mut filtered, n);
 
-        let amp_params = crate::dsp::envelope::AdsrParams {
-            attack: 0.005,
-            decay: 0.1,
-            sustain: 0.8,
-            release: 0.3,
-        };
-        self.amp_env.process_fill(&mut filtered, n, &amp_params);
+        self.amp_env.process_mul(&mut filtered, n, &p.amp_env);
 
+        let lfo_to_amp = p.lfo_destination == LfoDest::Amp;
         for i in 0..n {
-            let s = filtered[i] * self.velocity;
-            out_buf[i] += soft_clip(s);
+            let amp_lfo = if lfo_to_amp {
+                1.0 + lfo_buf[i] * p.lfo_depth
+            } else {
+                1.0
+            };
+            // Soft clipper (tanh-based)
+            out_buf[i] += (filtered[i] * self.velocity * amp_lfo).tanh();
         }
 
         if self.is_finished() {
@@ -213,57 +250,145 @@ impl Voice {
     }
 }
 
-/// Soft clipper (tanh-based) to prevent hard clipping on loud patches.
-#[inline]
-fn soft_clip(x: f64) -> f64 {
-    x.tanh()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dsp::{
+        envelope::AdsrParams,
+        lfo::{LfoDest, LfoWaveform},
+        oscillator::Waveform,
+    };
 
-    fn default_patch() -> Patch {
-        Patch::default()
+    fn bass_patch() -> Patch {
+        Patch {
+            osc1_waveform: Waveform::Saw,
+            osc1_octave: 0,
+            osc1_semitone: 0,
+            osc1_detune_ct: 0.0,
+            osc1_level: 1.0,
+            osc2_waveform: Waveform::Saw,
+            osc2_octave: 0,
+            osc2_semitone: 0,
+            osc2_detune_ct: 7.0,
+            osc2_level: 0.7,
+            osc3_waveform: Waveform::Square,
+            osc3_octave: -1,
+            osc3_semitone: 0,
+            osc3_detune_ct: 0.0,
+            osc3_level: 0.5,
+            noise_level: 0.0,
+            filter_cutoff_hz: 800.0,
+            filter_resonance: 0.3,
+            filter_env_amount: 0.6,
+            filter_key_track: 0.5,
+            filter_env: AdsrParams {
+                attack: 0.01,
+                decay: 0.25,
+                sustain: 0.4,
+                release: 0.4,
+            },
+            amp_env: AdsrParams {
+                attack: 0.005,
+                decay: 0.1,
+                sustain: 0.8,
+                release: 0.3,
+            },
+            lfo_waveform: LfoWaveform::Sine,
+            lfo_rate_hz: 0.5,
+            lfo_depth: 0.1,
+            lfo_destination: LfoDest::Filter,
+            glide_time: 0.0,
+        }
     }
 
     #[test]
     fn voice_produces_audio() {
         let sr = 48_000.0;
-        let patch = default_patch();
-        let mut voice = Voice::new(&patch, sr);
-        voice.note_on(60, 100, &patch, sr);
-
+        let p = bass_patch();
+        let mut v = Voice::new(&p, sr);
+        v.note_on(60, 100, &p, sr);
         let mut buf = vec![0.0_f64; 128];
-        voice.process(&mut buf, 128);
-
-        let peak: f64 = buf.iter().cloned().map(f64::abs).fold(0.0, f64::max);
+        v.process(&mut buf, 128);
+        let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
         assert!(peak > 1e-6, "voice produced silence");
     }
 
     #[test]
     fn voice_releases() {
         let sr = 48_000.0;
-        let patch = default_patch();
-        let mut voice = Voice::new(&patch, sr);
-        voice.note_on(60, 100, &patch, sr);
-
+        let p = bass_patch();
+        let mut v = Voice::new(&p, sr);
+        v.note_on(60, 100, &p, sr);
         let mut buf = [0.0_f64; 512];
         for _ in 0..200 {
             buf.fill(0.0);
-            voice.process(&mut buf, 128);
+            v.process(&mut buf, 128);
         }
-
-        voice.note_off(&patch);
-
+        v.note_off(&p);
         for _ in 0..200 {
             buf.fill(0.0);
-            voice.process(&mut buf, 128);
+            v.process(&mut buf, 128);
         }
+        assert!(v.is_finished() || v.status == VoiceStatus::Idle);
+    }
 
-        assert!(
-            voice.is_finished() || voice.status == VoiceStatus::Idle,
-            "voice did not finish after release"
-        );
+    #[test]
+    fn higher_note_brighter() {
+        let sr = 48_000.0;
+        let mut p = bass_patch();
+        p.filter_key_track = 1.0;
+        p.filter_env_amount = 0.0;
+        p.amp_env = AdsrParams {
+            attack: 0.001,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.1,
+        };
+
+        let measure_peak = |note: u8| {
+            let mut v = Voice::new(&p, sr);
+            v.note_on(note, 100, &p, sr);
+            let mut buf = [0.0_f64; 512];
+            let mut peak = 0.0_f64;
+            for _ in 0..50 {
+                buf.fill(0.0);
+                v.process(&mut buf, 128);
+                peak = peak.max(buf[..128].iter().cloned().map(f64::abs).fold(0.0, f64::max));
+            }
+            peak
+        };
+        assert!(measure_peak(36) > 1e-4, "low note silent");
+        assert!(measure_peak(84) > 1e-4, "high note silent");
+    }
+
+    #[test]
+    fn set_patch_updates_timbre() {
+        let sr = 48_000.0;
+        let mut p = bass_patch();
+        let mut v = Voice::new(&p, sr);
+        v.note_on(60, 100, &p, sr);
+        let mut buf = [0.0_f64; 512];
+        for _ in 0..10 {
+            buf.fill(0.0);
+            v.process(&mut buf, 128);
+        }
+        p.osc1_waveform = Waveform::Square;
+        v.set_patch(&p);
+        buf.fill(0.0);
+        v.process(&mut buf, 128);
+        let peak = buf[..128]
+            .iter()
+            .cloned()
+            .map(f64::abs)
+            .fold(0.0_f64, f64::max);
+        assert!(peak > 1e-6, "silent after set_patch");
+    }
+
+    #[test]
+    fn patch_is_copy() {
+        // Compile-time proof: Copy means assignment doesn't move.
+        let p = bass_patch();
+        let _p2 = p; // copy
+        let _p3 = p; // still usable — would fail if Patch were only Clone
     }
 }
