@@ -35,6 +35,16 @@ impl Channel {
         self.allocator.set_patch(&self.patch);
     }
 
+    /// Apply a pitch-bend offset (in semitones) to all active voices.
+    pub fn pitch_bend(&mut self, semitones: f64) {
+        self.allocator.pitch_bend(semitones);
+    }
+
+    /// Apply channel aftertouch (0.0..1.0) to all active voices.
+    pub fn channel_pressure(&mut self, value: f64) {
+        self.allocator.channel_pressure(value);
+    }
+
     pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
         self.allocator.process(out_buf, n);
     }

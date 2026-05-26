@@ -74,6 +74,7 @@ impl Engine {
         })
     }
 
+    #[allow(dead_code)]
     pub fn send(&self, msg: EngineMessage) -> bool {
         self.sender.try_send(msg).is_ok()
     }
@@ -140,6 +141,16 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
         EngineMessage::AllNotesOff => {
             for ch in channels.iter_mut() {
                 ch.all_notes_off();
+            }
+        }
+        EngineMessage::PitchBend { channel, semitones } => {
+            if let Some(ch) = channels.get_mut(channel) {
+                ch.pitch_bend(semitones);
+            }
+        }
+        EngineMessage::ChannelPressure { channel, value } => {
+            if let Some(ch) = channels.get_mut(channel) {
+                ch.channel_pressure(value);
             }
         }
     }

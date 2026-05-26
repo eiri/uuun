@@ -50,6 +50,12 @@ pub struct Voice {
     /// Velocity scaling (0.0 / 1.0).
     velocity: f64,
 
+    /// Pitch-bend offset in semitones, applied on top of glide output.
+    pitch_bend_semitones: f64,
+
+    /// Channel aftertouch value (0.0..1.0), modulates filter cutoff.
+    channel_pressure: f64,
+
     patch: Patch,
 }
 
@@ -72,12 +78,22 @@ impl Voice {
             sample_rate,
             base_hz: 440.0,
             velocity: 1.0,
+            pitch_bend_semitones: 0.0,
+            channel_pressure: 0.0,
             patch: *patch,
         }
     }
 
     pub fn set_patch(&mut self, patch: &Patch) {
         self.patch = *patch;
+    }
+
+    pub fn set_pitch_bend(&mut self, semitones: f64) {
+        self.pitch_bend_semitones = semitones;
+    }
+
+    pub fn set_channel_pressure(&mut self, value: f64) {
+        self.channel_pressure = value;
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch, sample_rate: f64) {
@@ -167,10 +183,18 @@ impl Voice {
         let mut mix_buf = [0.0_f64; 512];
         for i in 0..n {
             let base = freq_buf[i];
-            let pitch_factor = if pitch_lfo_semitones != 0.0 {
-                2.0_f64.powf(lfo_buf[i] * pitch_lfo_semitones / 12.0)
-            } else {
-                1.0
+            let pitch_factor = {
+                let lfo_st = if pitch_lfo_semitones != 0.0 {
+                    lfo_buf[i] * pitch_lfo_semitones
+                } else {
+                    0.0
+                };
+                let total_st = lfo_st + self.pitch_bend_semitones;
+                if total_st != 0.0 {
+                    2.0_f64.powf(total_st / 12.0)
+                } else {
+                    1.0
+                }
             };
             let bp = base * pitch_factor;
 
@@ -223,8 +247,10 @@ impl Voice {
             } else {
                 0.0
             };
-            cutoff_buf[i] =
-                (key_tracked_cutoff * 2.0_f64.powf(env_mod + lfo_mod)).clamp(20.0, nyquist);
+            // Channel aftertouch opens the filter by up to +3 octaves.
+            let pressure_mod = self.channel_pressure * 3.0;
+            cutoff_buf[i] = (key_tracked_cutoff * 2.0_f64.powf(env_mod + lfo_mod + pressure_mod))
+                .clamp(20.0, nyquist);
         }
 
         let mut filtered = [0.0_f64; 512];

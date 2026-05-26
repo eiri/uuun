@@ -60,6 +60,22 @@ impl VoiceAllocator {
         }
     }
 
+    pub fn pitch_bend(&mut self, semitones: f64) {
+        for v in self.voices.iter_mut() {
+            if v.status != VoiceStatus::Idle {
+                v.set_pitch_bend(semitones);
+            }
+        }
+    }
+
+    pub fn channel_pressure(&mut self, value: f64) {
+        for v in self.voices.iter_mut() {
+            if v.status != VoiceStatus::Idle {
+                v.set_channel_pressure(value);
+            }
+        }
+    }
+
     pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
         for v in self.voices.iter_mut() {
             if v.status != VoiceStatus::Idle {

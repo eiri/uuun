@@ -1,8 +1,9 @@
+// FIXME! - see midi/legato.rs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum GlideMode {
     Off,
     Always,
+    #[allow(dead_code)]
     Legato,
 }
 
