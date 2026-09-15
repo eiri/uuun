@@ -48,7 +48,7 @@ impl Engine {
 
         let build_result = match supported.sample_format() {
             SampleFormat::F32 => device.build_output_stream(
-                &config,
+                config,
                 move |data: &mut [f32], _info| {
                     audio_callback(
                         data,
