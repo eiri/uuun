@@ -3,7 +3,7 @@ use crate::dsp::{
     voice::{Voice, VoiceStatus},
 };
 
-pub const MAX_VOICES: usize = 8;
+pub(crate) const MAX_VOICES: usize = 8;
 
 pub struct VoiceAllocator {
     voices: [Voice; MAX_VOICES],
@@ -24,32 +24,32 @@ impl VoiceAllocator {
     }
 
     // Find or steal a voice for `note` and trigger it.
-    pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch, sample_rate: f64) {
+    pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch) {
         // Retrigger an existing voice instead of layering the same note.
         if let Some(i) = self.find_playing(note) {
             self.counter += 1;
             self.timestamps[i] = self.counter;
-            self.voices[i].note_on(note, velocity, patch, sample_rate);
+            self.voices[i].note_on(note, velocity, patch);
             return;
         }
 
         let i = self.steal_voice();
         self.counter += 1;
         self.timestamps[i] = self.counter;
-        self.voices[i].note_on(note, velocity, patch, sample_rate);
+        self.voices[i].note_on(note, velocity, patch);
     }
 
     // Send note-off to whichever voice is playing `note` (if any).
-    pub fn note_off(&mut self, note: u8, patch: &Patch) {
+    pub fn note_off(&mut self, note: u8) {
         if let Some(i) = self.find_playing(note) {
-            self.voices[i].note_off(patch);
+            self.voices[i].note_off();
         }
     }
 
-    pub fn all_notes_off(&mut self, patch: &Patch) {
+    pub fn all_notes_off(&mut self) {
         for v in self.voices.iter_mut() {
             if v.status != VoiceStatus::Idle {
-                v.note_off(patch);
+                v.note_off();
             }
         }
     }
@@ -60,9 +60,9 @@ impl VoiceAllocator {
         }
     }
 
-    pub fn set_patch(&mut self, patch: &Patch) {
+    pub(super) fn apply_patch(&mut self, patch: &Patch) {
         for v in self.voices.iter_mut() {
-            v.set_patch(patch);
+            v.apply_patch(patch);
         }
     }
 
@@ -141,14 +141,14 @@ mod tests {
     fn basic_note_on_off() {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
-        alloc.note_on(60, 100, &p, 48_000.0);
+        alloc.note_on(60, 100, &p);
         let active = alloc
             .voices
             .iter()
             .filter(|v| v.status == VoiceStatus::Active)
             .count();
         assert_eq!(active, 1);
-        alloc.note_off(60, &p);
+        alloc.note_off(60);
         let releasing = alloc
             .voices
             .iter()
@@ -162,7 +162,7 @@ mod tests {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
         for note in 60..60 + MAX_VOICES as u8 {
-            alloc.note_on(note, 100, &p, 48_000.0);
+            alloc.note_on(note, 100, &p);
         }
         let active = alloc
             .voices
@@ -178,10 +178,10 @@ mod tests {
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
         // Fill all 8 voices.
         for note in 60..60 + MAX_VOICES as u8 {
-            alloc.note_on(note, 100, &p, 48_000.0);
+            alloc.note_on(note, 100, &p);
         }
         // One more — should steal without panic.
-        alloc.note_on(80, 100, &p, 48_000.0);
+        alloc.note_on(80, 100, &p);
         let non_idle = alloc
             .voices
             .iter()
@@ -197,7 +197,7 @@ mod tests {
     fn all_sound_off_stops_immediately() {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
-        alloc.note_on(60, 100, &p, 48_000.0);
+        alloc.note_on(60, 100, &p);
         alloc.all_sound_off();
 
         let mut buf = [0.0_f64; 128];
@@ -211,9 +211,9 @@ mod tests {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
         for note in 60..68_u8 {
-            alloc.note_on(note, 100, &p, 48_000.0);
+            alloc.note_on(note, 100, &p);
         }
-        alloc.all_notes_off(&p);
+        alloc.all_notes_off();
         let still_active = alloc
             .voices
             .iter()
@@ -226,7 +226,7 @@ mod tests {
     fn allocator_produces_audio() {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);
-        alloc.note_on(60, 100, &p, 48_000.0);
+        alloc.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 128];
         alloc.process(&mut buf, 128);
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);

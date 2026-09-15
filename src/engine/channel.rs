@@ -2,9 +2,8 @@ use crate::dsp::patch::Patch;
 use crate::engine::{allocator::VoiceAllocator, control::Control};
 
 pub struct Channel {
-    pub patch: Patch,
+    patch: Patch,
     allocator: VoiceAllocator,
-    pub sample_rate: f64,
     pitch_bend: f64,
     pressure: f64,
     sustain: bool,
@@ -18,7 +17,6 @@ impl Channel {
         Self {
             patch,
             allocator,
-            sample_rate,
             pitch_bend: 0.0,
             pressure: 0.0,
             sustain: false,
@@ -31,8 +29,7 @@ impl Channel {
         let note = note as usize;
         self.presses[note] = self.presses[note].saturating_add(1);
         self.deferred[note] = false;
-        self.allocator
-            .note_on(note as u8, velocity, &self.patch, self.sample_rate);
+        self.allocator.note_on(note as u8, velocity, &self.patch);
         self.allocator.pitch_bend(self.pitch_bend);
         self.allocator.channel_pressure(self.pressure);
     }
@@ -51,14 +48,14 @@ impl Channel {
         if self.sustain {
             self.deferred[note] = true;
         } else {
-            self.allocator.note_off(note as u8, &self.patch);
+            self.allocator.note_off(note as u8);
         }
     }
 
     pub fn all_notes_off(&mut self) {
         self.presses.fill(0);
         self.deferred.fill(false);
-        self.allocator.all_notes_off(&self.patch);
+        self.allocator.all_notes_off();
     }
 
     pub fn all_sound_off(&mut self) {
@@ -71,7 +68,7 @@ impl Channel {
         if self.sustain && !down {
             for (note, deferred) in self.deferred.iter_mut().enumerate() {
                 if *deferred {
-                    self.allocator.note_off(note as u8, &self.patch);
+                    self.allocator.note_off(note as u8);
                     *deferred = false;
                 }
             }
@@ -117,7 +114,7 @@ impl Channel {
             }
         }
 
-        self.allocator.set_patch(&self.patch);
+        self.allocator.apply_patch(&self.patch);
     }
 
     /// Apply a pitch-bend offset (in semitones) to all active voices.

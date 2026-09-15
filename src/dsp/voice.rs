@@ -29,8 +29,8 @@ pub enum VoiceStatus {
 }
 
 pub struct Voice {
-    pub status: VoiceStatus,
-    pub midi_note: u8,
+    pub(crate) status: VoiceStatus,
+    pub(crate) midi_note: u8,
 
     osc1: Oscillator,
     osc2: Oscillator,
@@ -80,7 +80,7 @@ impl Voice {
         }
     }
 
-    pub fn set_patch(&mut self, patch: &Patch) {
+    pub(crate) fn apply_patch(&mut self, patch: &Patch) {
         self.patch = *patch;
     }
 
@@ -92,17 +92,20 @@ impl Voice {
         self.channel_pressure = value;
     }
 
-    pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch, sample_rate: f64) {
+    pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch) {
         self.patch = *patch;
 
         let target_hz = midi_to_hz(note);
-        self.glide
-            .set_target(target_hz, patch.glide_time, sample_rate, patch.glide_type);
+        self.glide.set_target(
+            target_hz,
+            patch.glide_time,
+            self.sample_rate,
+            patch.glide_type,
+        );
 
         self.midi_note = note;
         self.velocity = velocity as f64 / 127.0;
         self.status = VoiceStatus::Active;
-        self.sample_rate = sample_rate;
 
         // Trigger envelopes.
         self.amp_env.note_on();
@@ -118,7 +121,7 @@ impl Voice {
     }
 
     /// Begin note release.
-    pub fn note_off(&mut self, _patch: &Patch) {
+    pub fn note_off(&mut self) {
         self.amp_env.note_off();
         self.filter_env.note_off();
         self.status = VoiceStatus::Releasing;
@@ -325,7 +328,7 @@ mod tests {
         let sr = 48_000.0;
         let p = bass_patch();
         let mut v = Voice::new(&p, sr);
-        v.note_on(60, 100, &p, sr);
+        v.note_on(60, 100, &p);
         let mut buf = vec![0.0_f64; 128];
         v.process(&mut buf, 128);
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
@@ -337,13 +340,13 @@ mod tests {
         let sr = 48_000.0;
         let p = bass_patch();
         let mut v = Voice::new(&p, sr);
-        v.note_on(60, 100, &p, sr);
+        v.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 512];
         for _ in 0..200 {
             buf.fill(0.0);
             v.process(&mut buf, 128);
         }
-        v.note_off(&p);
+        v.note_off();
         for _ in 0..200 {
             buf.fill(0.0);
             v.process(&mut buf, 128);
@@ -366,7 +369,7 @@ mod tests {
 
         let measure_peak = |note: u8| {
             let mut v = Voice::new(&p, sr);
-            v.note_on(note, 100, &p, sr);
+            v.note_on(note, 100, &p);
             let mut buf = [0.0_f64; 512];
             let mut peak = 0.0_f64;
             for _ in 0..50 {
@@ -385,14 +388,14 @@ mod tests {
         let sr = 48_000.0;
         let mut p = bass_patch();
         let mut v = Voice::new(&p, sr);
-        v.note_on(60, 100, &p, sr);
+        v.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 512];
         for _ in 0..10 {
             buf.fill(0.0);
             v.process(&mut buf, 128);
         }
         p.osc1_waveform = Waveform::Square;
-        v.set_patch(&p);
+        v.apply_patch(&p);
         buf.fill(0.0);
         v.process(&mut buf, 128);
         let peak = buf[..128]
@@ -411,11 +414,11 @@ mod tests {
             ..bass_patch()
         };
         let mut voice = Voice::new(&patch, 48_000.0);
-        voice.note_on(60, 100, &patch, 48_000.0);
+        voice.note_on(60, 100, &patch);
         assert!((voice.glide.tick() - midi_to_hz(60)).abs() < 0.1);
 
         voice.stop();
-        voice.note_on(72, 100, &patch, 48_000.0);
+        voice.note_on(72, 100, &patch);
         let first = voice.glide.tick();
 
         assert!(first < midi_to_hz(72));
@@ -445,7 +448,7 @@ mod tests {
         let render = |patch: Patch| {
             let mut voice = Voice::new(&patch, 48_000.0);
             let mut output = [0.0; 256];
-            voice.note_on(60, 127, &patch, 48_000.0);
+            voice.note_on(60, 127, &patch);
             voice.process(&mut output, 256);
             output
         };

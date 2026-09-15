@@ -82,11 +82,6 @@ impl Envelope {
         self.stage == Stage::Idle
     }
 
-    #[allow(dead_code)]
-    pub fn is_active(&self) -> bool {
-        self.stage != Stage::Idle
-    }
-
     #[inline]
     pub fn tick(&mut self, params: &AdsrParams) -> f64 {
         let sr = self.sample_rate;
