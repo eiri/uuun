@@ -222,6 +222,16 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
                 ch.all_sound_off();
             }
         }
+        EngineMessage::Sustain { channel, down } => {
+            if let Some(ch) = channels.get_mut(channel) {
+                ch.set_sustain(down);
+            }
+        }
+        EngineMessage::ResetControllers { channel } => {
+            if let Some(ch) = channels.get_mut(channel) {
+                ch.reset_controllers();
+            }
+        }
         EngineMessage::PitchBend { channel, semitones } => {
             if let Some(ch) = channels.get_mut(channel) {
                 ch.pitch_bend(semitones);

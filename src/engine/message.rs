@@ -21,6 +21,13 @@ pub enum EngineMessage {
     AllSoundOff {
         channel: usize,
     },
+    Sustain {
+        channel: usize,
+        down: bool,
+    },
+    ResetControllers {
+        channel: usize,
+    },
     PitchBend {
         channel: usize,
         semitones: f64,

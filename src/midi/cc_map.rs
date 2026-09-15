@@ -1,3 +1,8 @@
+pub const SUSTAIN_CC: u8 = 64;
+pub const ALL_SOUND_OFF_CC: u8 = 120;
+pub const RESET_CONTROLLERS_CC: u8 = 121;
+pub const ALL_NOTES_OFF_CC: u8 = 123;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CcTarget {
     FilterCutoff,

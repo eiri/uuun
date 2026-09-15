@@ -4,7 +4,10 @@ use crate::{
     dsp::patch::Patch,
     engine::{audio::NUM_CHANNELS, message::EngineMessage},
     midi::{
-        cc_map::{CcTarget, cc_target},
+        cc_map::{
+            ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, CcTarget, RESET_CONTROLLERS_CC, SUSTAIN_CC,
+            cc_target,
+        },
         message::MidiEvent,
     },
 };
@@ -61,11 +64,22 @@ impl MidiRouter {
                     return;
                 }
                 match cc {
-                    120 => {
+                    SUSTAIN_CC => {
+                        self.send_critical(EngineMessage::Sustain {
+                            channel: ch,
+                            down: value >= 64,
+                        });
+                        return;
+                    }
+                    ALL_SOUND_OFF_CC => {
                         self.send_critical(EngineMessage::AllSoundOff { channel: ch });
                         return;
                     }
-                    123 => {
+                    RESET_CONTROLLERS_CC => {
+                        self.send_critical(EngineMessage::ResetControllers { channel: ch });
+                        return;
+                    }
+                    ALL_NOTES_OFF_CC => {
                         self.send_critical(EngineMessage::AllNotesOff { channel: ch });
                         return;
                     }
@@ -228,7 +242,7 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(2);
         let mut router = MidiRouter::new(Patch::default(), tx);
 
-        for cc in [120, 123] {
+        for cc in [ALL_SOUND_OFF_CC, ALL_NOTES_OFF_CC] {
             router.route(MidiEvent::ControlChange {
                 channel: 1,
                 cc,
@@ -243,6 +257,44 @@ mod tests {
         assert!(matches!(
             rx.recv().unwrap(),
             EngineMessage::AllNotesOff { channel: 1 }
+        ));
+    }
+
+    #[test]
+    fn sustain_and_reset_are_forwarded() {
+        let (tx, rx) = mpsc::sync_channel(3);
+        let mut router = MidiRouter::new(Patch::default(), tx);
+
+        for value in [127, 0] {
+            router.route(MidiEvent::ControlChange {
+                channel: 2,
+                cc: SUSTAIN_CC,
+                value,
+            });
+        }
+        router.route(MidiEvent::ControlChange {
+            channel: 2,
+            cc: RESET_CONTROLLERS_CC,
+            value: 0,
+        });
+
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::Sustain {
+                channel: 2,
+                down: true
+            }
+        ));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::Sustain {
+                channel: 2,
+                down: false
+            }
+        ));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::ResetControllers { channel: 2 }
         ));
     }
 }

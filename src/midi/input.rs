@@ -2,7 +2,10 @@ use std::sync::mpsc;
 
 use midir::{Ignore, MidiInput, MidiInputConnection};
 
-use crate::midi::message::MidiEvent;
+use crate::midi::{
+    cc_map::{ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, RESET_CONTROLLERS_CC, SUSTAIN_CC},
+    message::MidiEvent,
+};
 
 /// Owns the MIDI input connection.  Drop to close the port.
 pub struct MidiManager {
@@ -83,7 +86,11 @@ fn forward(tx: &mpsc::SyncSender<MidiEvent>, event: MidiEvent) {
 fn must_deliver(event: &MidiEvent) -> bool {
     matches!(
         event,
-        MidiEvent::NoteOff { .. } | MidiEvent::ControlChange { cc: 120 | 123, .. }
+        MidiEvent::NoteOff { .. }
+            | MidiEvent::ControlChange {
+                cc: SUSTAIN_CC | ALL_SOUND_OFF_CC | RESET_CONTROLLERS_CC | ALL_NOTES_OFF_CC,
+                ..
+            }
     )
 }
 
@@ -179,7 +186,12 @@ mod tests {
             note: 60,
         }));
 
-        for cc in [120, 123] {
+        for cc in [
+            SUSTAIN_CC,
+            ALL_SOUND_OFF_CC,
+            RESET_CONTROLLERS_CC,
+            ALL_NOTES_OFF_CC,
+        ] {
             assert!(must_deliver(&MidiEvent::ControlChange {
                 channel: 0,
                 cc,
