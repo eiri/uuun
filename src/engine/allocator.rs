@@ -54,6 +54,12 @@ impl VoiceAllocator {
         }
     }
 
+    pub fn all_sound_off(&mut self) {
+        for voice in self.voices.iter_mut() {
+            voice.stop();
+        }
+    }
+
     pub fn set_patch(&mut self, patch: &Patch) {
         for v in self.voices.iter_mut() {
             v.set_patch(patch);
@@ -185,6 +191,19 @@ mod tests {
             non_idle, MAX_VOICES,
             "voice count should stay at MAX after steal"
         );
+    }
+
+    #[test]
+    fn all_sound_off_stops_immediately() {
+        let p = default_patch();
+        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        alloc.note_on(60, 100, &p, 48_000.0);
+        alloc.all_sound_off();
+
+        let mut buf = [0.0_f64; 128];
+        alloc.process(&mut buf, 128);
+
+        assert!(buf.iter().all(|sample| *sample == 0.0));
     }
 
     #[test]

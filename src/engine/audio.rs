@@ -133,9 +133,14 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
                 ch.set_patch(*patch);
             }
         }
-        EngineMessage::AllNotesOff => {
-            for ch in channels.iter_mut() {
+        EngineMessage::AllNotesOff { channel } => {
+            if let Some(ch) = channels.get_mut(channel) {
                 ch.all_notes_off();
+            }
+        }
+        EngineMessage::AllSoundOff { channel } => {
+            if let Some(ch) = channels.get_mut(channel) {
+                ch.all_sound_off();
             }
         }
         EngineMessage::PitchBend { channel, semitones } => {

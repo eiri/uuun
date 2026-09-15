@@ -15,8 +15,12 @@ pub enum EngineMessage {
         channel: usize,
         patch: Box<Patch>,
     },
-    #[allow(dead_code)]
-    AllNotesOff,
+    AllNotesOff {
+        channel: usize,
+    },
+    AllSoundOff {
+        channel: usize,
+    },
     PitchBend {
         channel: usize,
         semitones: f64,

@@ -36,6 +36,10 @@ impl Channel {
         self.allocator.all_notes_off(&self.patch);
     }
 
+    pub fn all_sound_off(&mut self) {
+        self.allocator.all_sound_off();
+    }
+
     pub fn set_patch(&mut self, patch: Patch) {
         self.patch = patch;
         self.allocator.set_patch(&self.patch);

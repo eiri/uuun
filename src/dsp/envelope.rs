@@ -54,6 +54,13 @@ impl Envelope {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.stage = Stage::Idle;
+        self.value = 0.0;
+        self.release_start = 0.0;
+        self.stage_samples = 0;
+    }
+
     /// Trigger a new note.  Can be called while still in Release (legato).
     pub fn note_on(&mut self) {
         self.stage = Stage::Attack;

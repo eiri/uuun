@@ -145,6 +145,14 @@ impl Voice {
         self.status = VoiceStatus::Releasing;
     }
 
+    /// Stop immediately without running the release stage.
+    pub fn stop(&mut self) {
+        self.amp_env.reset();
+        self.filter_env.reset();
+        self.filter.reset();
+        self.status = VoiceStatus::Idle;
+    }
+
     /// `true` when the voice has fully decayed and can be reassigned.
     pub fn is_finished(&self) -> bool {
         self.amp_env.is_finished()

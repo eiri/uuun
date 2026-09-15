@@ -52,7 +52,7 @@ impl MidiRouter {
                 if ch >= NUM_CHANNELS {
                     return;
                 }
-                self.send(EngineMessage::NoteOff { channel: ch, note });
+                self.send_critical(EngineMessage::NoteOff { channel: ch, note });
             }
 
             MidiEvent::ControlChange { channel, cc, value } => {
@@ -60,6 +60,18 @@ impl MidiRouter {
                 if ch >= NUM_CHANNELS {
                     return;
                 }
+                match cc {
+                    120 => {
+                        self.send_critical(EngineMessage::AllSoundOff { channel: ch });
+                        return;
+                    }
+                    123 => {
+                        self.send_critical(EngineMessage::AllNotesOff { channel: ch });
+                        return;
+                    }
+                    _ => {}
+                }
+
                 let target = cc_target(cc);
                 if target == CcTarget::Unassigned {
                     return;
@@ -91,8 +103,13 @@ impl MidiRouter {
     }
 
     fn send(&self, msg: EngineMessage) {
-        // Non-blocking: if the engine queue is full - drop the message
+        // Continuous controls may be dropped when the engine is behind.
         let _ = self.engine_tx.try_send(msg);
+    }
+
+    fn send_critical(&self, msg: EngineMessage) {
+        // Releases must survive a full queue to prevent stuck notes.
+        let _ = self.engine_tx.send(msg);
     }
 
     fn apply_cc(&mut self, ch: usize, target: CcTarget, v: f64) {
@@ -172,4 +189,60 @@ impl MidiRouter {
 
 fn map_adsr_time(v: f64) -> f64 {
     0.001 * 10_000.0_f64.powf(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn note_off_survives_full_queue() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut router = MidiRouter::new(Patch::default(), tx);
+        router.route(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+
+        let handle = std::thread::spawn(move || {
+            router.route(MidiEvent::NoteOff {
+                channel: 0,
+                note: 60,
+            });
+        });
+
+        assert!(matches!(rx.recv().unwrap(), EngineMessage::NoteOn { .. }));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::NoteOff {
+                channel: 0,
+                note: 60
+            }
+        ));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn panic_controls_are_forwarded() {
+        let (tx, rx) = mpsc::sync_channel(2);
+        let mut router = MidiRouter::new(Patch::default(), tx);
+
+        for cc in [120, 123] {
+            router.route(MidiEvent::ControlChange {
+                channel: 1,
+                cc,
+                value: 0,
+            });
+        }
+
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::AllSoundOff { channel: 1 }
+        ));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::AllNotesOff { channel: 1 }
+        ));
+    }
 }

@@ -19,7 +19,6 @@ impl MoogFilter {
         }
     }
 
-    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.y = [0.0; 4];
         self.yp = [0.0; 4];
