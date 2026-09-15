@@ -5,6 +5,8 @@ pub struct Channel {
     pub patch: Patch,
     allocator: VoiceAllocator,
     pub sample_rate: f64,
+    pitch_bend: f64,
+    pressure: f64,
 }
 
 impl Channel {
@@ -14,12 +16,16 @@ impl Channel {
             patch,
             allocator,
             sample_rate,
+            pitch_bend: 0.0,
+            pressure: 0.0,
         }
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8) {
         self.allocator
             .note_on(note, velocity, &self.patch, self.sample_rate);
+        self.allocator.pitch_bend(self.pitch_bend);
+        self.allocator.channel_pressure(self.pressure);
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -37,11 +43,13 @@ impl Channel {
 
     /// Apply a pitch-bend offset (in semitones) to all active voices.
     pub fn pitch_bend(&mut self, semitones: f64) {
+        self.pitch_bend = semitones;
         self.allocator.pitch_bend(semitones);
     }
 
     /// Apply channel aftertouch (0.0..1.0) to all active voices.
     pub fn channel_pressure(&mut self, value: f64) {
+        self.pressure = value;
         self.allocator.channel_pressure(value);
     }
 
@@ -62,6 +70,48 @@ mod tests {
         ch.process(&mut buf, 128);
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
         assert!(peak > 1e-6);
+    }
+
+    #[test]
+    fn bend_set_before_note_is_applied() {
+        let patch = Patch {
+            filter_cutoff_hz: 10_000.0,
+            ..Default::default()
+        };
+        let mut plain = Channel::new(patch, 48_000.0);
+        let mut bent = Channel::new(patch, 48_000.0);
+        bent.pitch_bend(2.0);
+
+        plain.note_on(60, 100);
+        bent.note_on(60, 100);
+
+        let mut plain_buf = [0.0_f64; 256];
+        let mut bent_buf = [0.0_f64; 256];
+        plain.process(&mut plain_buf, 256);
+        bent.process(&mut bent_buf, 256);
+
+        assert_ne!(plain_buf, bent_buf);
+    }
+
+    #[test]
+    fn pressure_set_before_note_is_applied() {
+        let patch = Patch {
+            filter_cutoff_hz: 200.0,
+            ..Default::default()
+        };
+        let mut plain = Channel::new(patch, 48_000.0);
+        let mut pressed = Channel::new(patch, 48_000.0);
+        pressed.channel_pressure(1.0);
+
+        plain.note_on(60, 100);
+        pressed.note_on(60, 100);
+
+        let mut plain_buf = [0.0_f64; 256];
+        let mut pressed_buf = [0.0_f64; 256];
+        plain.process(&mut plain_buf, 256);
+        pressed.process(&mut pressed_buf, 256);
+
+        assert_ne!(plain_buf, pressed_buf);
     }
 
     #[test]

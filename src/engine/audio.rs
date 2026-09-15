@@ -43,8 +43,8 @@ impl Engine {
         let mut ch_array: [Channel; NUM_CHANNELS] =
             std::array::from_fn(|_| Channel::new(initial_patch, sample_rate));
 
-        // Mix buffer shared across blocks.
-        let mut mix_f64 = vec![0.0_f64; BLOCK_SIZE];
+        // Fixed scratch buffer keeps allocations off the audio thread.
+        let mut mix_f64 = [0.0_f64; BLOCK_SIZE];
 
         let build_result = match supported.sample_format() {
             SampleFormat::F32 => device.build_output_stream(
@@ -89,31 +89,26 @@ fn audio_callback(
     output: &mut [f32],
     rx: &mpsc::Receiver<EngineMessage>,
     channels: &mut [Channel; NUM_CHANNELS],
-    mix_f64: &mut Vec<f64>,
+    mix_f64: &mut [f64; BLOCK_SIZE],
     out_chans: usize,
     _sample_rate: f64,
 ) {
-    let frames = output.len() / out_chans;
-
     while let Ok(msg) = rx.try_recv() {
         apply_message(channels, msg);
     }
 
-    if mix_f64.len() < frames {
-        mix_f64.resize(frames, 0.0);
-    }
-    mix_f64[..frames].fill(0.0);
+    // CPAL may provide more frames than requested. Render bounded chunks.
+    for block in output.chunks_mut(BLOCK_SIZE * out_chans) {
+        let frames = block.len().div_ceil(out_chans);
+        mix_f64[..frames].fill(0.0);
 
-    for ch in channels.iter_mut() {
-        ch.process(&mut mix_f64[..frames], frames);
-    }
-
-    let mut frame_idx = 0;
-    for sample in mix_f64.iter().take(frames) {
-        for ch in 0..out_chans {
-            output[frame_idx + ch] = sample.clamp(-1.0, 1.0) as f32;
+        for channel in channels.iter_mut() {
+            channel.process(&mut mix_f64[..frames], frames);
         }
-        frame_idx += out_chans;
+
+        for (frame, sample) in block.chunks_mut(out_chans).zip(mix_f64.iter()) {
+            frame.fill(sample.clamp(-1.0, 1.0) as f32);
+        }
     }
 }
 
@@ -153,5 +148,30 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
                 ch.channel_pressure(value);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_handles_large_blocks() {
+        let patch = Patch::default();
+        let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(EngineMessage::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        })
+        .unwrap();
+
+        let frames = BLOCK_SIZE * 3;
+        let mut output = vec![0.0; frames * 2];
+        let mut mix = [0.0; BLOCK_SIZE];
+        audio_callback(&mut output, &rx, &mut channels, &mut mix, 2, 48_000.0);
+
+        assert!(output.iter().any(|sample| *sample != 0.0));
     }
 }

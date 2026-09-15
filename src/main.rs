@@ -80,11 +80,8 @@ fn main() {
     let mut router = MidiRouter::new(patch, engine_tx);
 
     thread::spawn(move || {
-        loop {
-            match midi_rx.recv() {
-                Ok(ev) => router.route(ev),
-                Err(_) => break,
-            }
+        while let Ok(ev) = midi_rx.recv() {
+            router.route(ev);
         }
     });
 
