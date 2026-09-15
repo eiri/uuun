@@ -25,7 +25,7 @@ impl VoiceAllocator {
 
     // Find or steal a voice for `note` and trigger it.
     pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch, sample_rate: f64) {
-        // If this note is already playing, retrigger its voice for legato or mono layer unison.
+        // Retrigger an existing voice instead of layering the same note.
         if let Some(i) = self.find_playing(note) {
             self.counter += 1;
             self.timestamps[i] = self.counter;

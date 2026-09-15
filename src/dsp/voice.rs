@@ -14,7 +14,7 @@
 use crate::dsp::{
     envelope::Envelope,
     filter::MoogFilter,
-    glide::{Glide, GlideMode},
+    glide::Glide,
     lfo::{Lfo, LfoDest},
     noise::NoiseGen,
     oscillator::{Oscillator, apply_pitch_offset, midi_to_hz},
@@ -43,9 +43,6 @@ pub struct Voice {
     glide: Glide,
 
     sample_rate: f64,
-
-    /// Base frequency after glide, before LFO pitch mod.
-    base_hz: f64,
 
     /// Velocity scaling (0.0 / 1.0).
     velocity: f64,
@@ -76,7 +73,6 @@ impl Voice {
             glide: Glide::new(),
 
             sample_rate,
-            base_hz: 440.0,
             velocity: 1.0,
             pitch_bend_semitones: 0.0,
             channel_pressure: 0.0,
@@ -100,30 +96,13 @@ impl Voice {
         self.patch = *patch;
 
         let target_hz = midi_to_hz(note);
-        let prev_held = self.status == VoiceStatus::Active;
-
-        // If this is the first note ever, snap the glide to the target instantly.
-        if self.status == VoiceStatus::Idle {
-            self.glide.reset_to(target_hz);
-        }
-
-        self.glide.set_target(
-            target_hz,
-            prev_held,
-            patch.glide_time,
-            sample_rate,
-            if patch.glide_time > 1e-4 {
-                GlideMode::Always
-            } else {
-                GlideMode::Off
-            },
-        );
+        self.glide
+            .set_target(target_hz, patch.glide_time, sample_rate, patch.glide_type);
 
         self.midi_note = note;
         self.velocity = velocity as f64 / 127.0;
         self.status = VoiceStatus::Active;
         self.sample_rate = sample_rate;
-        self.base_hz = target_hz;
 
         // Trigger envelopes.
         self.amp_env.note_on();
@@ -337,6 +316,7 @@ mod tests {
             lfo_depth: 0.1,
             lfo_destination: LfoDest::Filter,
             glide_time: 0.0,
+            glide_type: crate::dsp::glide::GlideType::Lcr,
         }
     }
 
@@ -421,6 +401,25 @@ mod tests {
             .map(f64::abs)
             .fold(0.0_f64, f64::max);
         assert!(peak > 1e-6, "silent after set_patch");
+    }
+
+    #[test]
+    fn reused_voice_glides_from_last_pitch() {
+        let patch = Patch {
+            glide_time: 0.1,
+            glide_type: crate::dsp::glide::GlideType::Lct,
+            ..bass_patch()
+        };
+        let mut voice = Voice::new(&patch, 48_000.0);
+        voice.note_on(60, 100, &patch, 48_000.0);
+        assert!((voice.glide.tick() - midi_to_hz(60)).abs() < 0.1);
+
+        voice.stop();
+        voice.note_on(72, 100, &patch, 48_000.0);
+        let first = voice.glide.tick();
+
+        assert!(first < midi_to_hz(72));
+        assert!(first > midi_to_hz(60));
     }
 
     #[test]

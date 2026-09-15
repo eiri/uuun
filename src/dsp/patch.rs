@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     envelope::AdsrParams,
+    glide::GlideType,
     lfo::{LfoDest, LfoWaveform},
     oscillator::Waveform,
 };
@@ -54,6 +55,8 @@ pub struct Patch {
 
     /// Portamento time in seconds (0.0 = off).
     pub glide_time: f64,
+    #[serde(default)]
+    pub glide_type: GlideType,
 }
 
 impl Patch {
@@ -162,6 +165,7 @@ impl Default for Patch {
             lfo_destination: LfoDest::Filter,
 
             glide_time: 0.0,
+            glide_type: GlideType::Lcr,
         }
     }
 }

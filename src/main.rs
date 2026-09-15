@@ -6,6 +6,7 @@ use std::{env, sync::mpsc, thread};
 
 use dsp::{
     envelope::AdsrParams,
+    glide::GlideType,
     lfo::{LfoDest, LfoWaveform},
     oscillator::Waveform,
     patch::Patch,
@@ -59,6 +60,7 @@ fn main() {
         lfo_destination: LfoDest::Filter,
 
         glide_time: 0.0,
+        glide_type: GlideType::Lcr,
     };
 
     let engine = Engine::start(patch).unwrap_or_else(|e| {

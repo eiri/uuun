@@ -61,7 +61,7 @@ impl Envelope {
         self.stage_samples = 0;
     }
 
-    /// Trigger a new note.  Can be called while still in Release (legato).
+    /// Trigger a note without discontinuity when already releasing.
     pub fn note_on(&mut self) {
         self.stage = Stage::Attack;
         self.stage_samples = 0;
