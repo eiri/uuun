@@ -8,6 +8,7 @@ pub struct Channel {
     pitch_bend: f64,
     pressure: f64,
     sustain: bool,
+    presses: [u16; 128],
     deferred: [bool; 128],
 }
 
@@ -21,32 +22,47 @@ impl Channel {
             pitch_bend: 0.0,
             pressure: 0.0,
             sustain: false,
+            presses: [0; 128],
             deferred: [false; 128],
         }
     }
 
     pub fn note_on(&mut self, note: u8, velocity: u8) {
-        self.deferred[note as usize] = false;
+        let note = note as usize;
+        self.presses[note] = self.presses[note].saturating_add(1);
+        self.deferred[note] = false;
         self.allocator
-            .note_on(note, velocity, &self.patch, self.sample_rate);
+            .note_on(note as u8, velocity, &self.patch, self.sample_rate);
         self.allocator.pitch_bend(self.pitch_bend);
         self.allocator.channel_pressure(self.pressure);
     }
 
     pub fn note_off(&mut self, note: u8) {
+        let note = note as usize;
+        if self.presses[note] == 0 {
+            return;
+        }
+
+        self.presses[note] -= 1;
+        if self.presses[note] > 0 {
+            return;
+        }
+
         if self.sustain {
-            self.deferred[note as usize] = true;
+            self.deferred[note] = true;
         } else {
-            self.allocator.note_off(note, &self.patch);
+            self.allocator.note_off(note as u8, &self.patch);
         }
     }
 
     pub fn all_notes_off(&mut self) {
+        self.presses.fill(0);
         self.deferred.fill(false);
         self.allocator.all_notes_off(&self.patch);
     }
 
     pub fn all_sound_off(&mut self) {
+        self.presses.fill(0);
         self.deferred.fill(false);
         self.allocator.all_sound_off();
     }
@@ -162,6 +178,22 @@ mod tests {
 
         ch.set_sustain(false);
         assert!(!ch.deferred[60]);
+    }
+
+    #[test]
+    fn repeated_note_waits_for_every_note_off() {
+        let mut ch = Channel::new(Patch::default(), 48_000.0);
+        ch.set_sustain(true);
+        ch.note_on(60, 100);
+        ch.note_on(60, 100);
+
+        ch.note_off(60);
+        assert_eq!(ch.presses[60], 1);
+        assert!(!ch.deferred[60]);
+
+        ch.note_off(60);
+        assert_eq!(ch.presses[60], 0);
+        assert!(ch.deferred[60]);
     }
 
     #[test]
