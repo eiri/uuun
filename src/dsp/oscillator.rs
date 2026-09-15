@@ -45,6 +45,7 @@ impl Oscillator {
     }
 
     /// Render `n` samples of the chosen waveform at `freq` Hz into `buf`.
+    /// Frequencies at or above Nyquist are muted to prevent aliasing.
     /// `buf` is accumulated into (not overwritten) so multiple oscillators can
     /// be summed in the voice without an extra allocation.
     pub fn process(
@@ -55,7 +56,18 @@ impl Oscillator {
         waveform: Waveform,
         sample_rate: f64,
     ) {
-        let dt = freq / sample_rate;
+        if !freq.is_finite() || !sample_rate.is_finite() || sample_rate <= 0.0 {
+            return;
+        }
+
+        let nyquist = sample_rate * 0.5;
+        let muted = freq >= nyquist || freq < 0.0;
+        let dt = freq.clamp(0.0, nyquist) / sample_rate;
+
+        if muted {
+            self.phase = (self.phase + dt * n as f64).rem_euclid(1.0);
+            return;
+        }
 
         for s in buf[..n].iter_mut() {
             let sample = match waveform {
@@ -86,12 +98,7 @@ impl Oscillator {
             };
 
             *s += sample;
-
-            // Advance phase.
-            self.phase += dt;
-            if self.phase >= 1.0 {
-                self.phase -= 1.0;
-            }
+            self.phase = (self.phase + dt).rem_euclid(1.0);
         }
     }
 }
@@ -153,6 +160,36 @@ mod tests {
                 "{wf:?} produced NaN or Inf"
             );
         }
+    }
+
+    #[test]
+    fn near_nyquist_stays_finite() {
+        for waveform in [
+            Waveform::Sine,
+            Waveform::Saw,
+            Waveform::Square,
+            Waveform::Triangle,
+        ] {
+            let mut osc = Oscillator::new();
+            let mut buf = [0.0; 257];
+            osc.process(&mut buf, 257, SR * 0.499, waveform, SR);
+
+            assert!(buf.iter().all(|sample| sample.is_finite()));
+            assert!((0.0..1.0).contains(&osc.phase));
+        }
+    }
+
+    #[test]
+    fn extreme_pitch_is_muted() {
+        let freq = apply_pitch_offset(midi_to_hz(127), 2, 12, 100.0);
+        assert!(freq > SR * 0.5);
+
+        let mut osc = Oscillator::new();
+        let mut buf = [0.0; 257];
+        osc.process(&mut buf, 257, freq, Waveform::Saw, SR);
+
+        assert!(buf.iter().all(|sample| *sample == 0.0));
+        assert!((0.0..1.0).contains(&osc.phase));
     }
 
     #[test]
