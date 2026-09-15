@@ -15,7 +15,7 @@ pub const NUM_CHANNELS: usize = 4; // multitimbral
 pub const BLOCK_SIZE: usize = 256; // preferred buffer size in frames
 
 const CHANNEL_GAIN: f64 = 0.5;
-const MASTER_GAIN: f64 = 0.5;
+const MASTER_GAIN: f64 = 0.23;
 
 pub struct Engine {
     sender: mpsc::SyncSender<EngineMessage>,
@@ -290,5 +290,55 @@ mod tests {
         let mut unsigned = vec![32_768_u16; BLOCK_SIZE * 2];
         render(&mut unsigned);
         assert!(unsigned.iter().any(|sample| *sample != 32_768));
+    }
+
+    #[test]
+    fn gain_stays_clean_under_load() {
+        for voices in [1, 8, 32] {
+            let samples = render_voices(voices);
+            let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
+            let rms = (samples
+                .iter()
+                .map(|sample| f64::from(*sample).powi(2))
+                .sum::<f64>()
+                / samples.len() as f64)
+                .sqrt();
+            let clipped = samples.iter().filter(|sample| sample.abs() >= 1.0).count();
+
+            assert!(rms > 0.001, "{voices} voices produced silence");
+            assert!(rms < 0.35, "{voices} voices reached {rms:.3} RMS");
+            assert!(peak < 0.9, "{voices} voices peaked at {peak:.3}");
+            assert_eq!(clipped, 0, "{voices} voices clipped {clipped} samples");
+        }
+    }
+
+    fn render_voices(voices: usize) -> Vec<f32> {
+        let patch = Patch {
+            filter_cutoff_hz: 10_000.0,
+            ..Patch::default()
+        };
+        let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
+        for voice in 0..voices {
+            let channel = voice / crate::engine::allocator::MAX_VOICES;
+            let note = 48 + (voice % crate::engine::allocator::MAX_VOICES) as u8;
+            channels[channel].note_on(note, 127);
+        }
+
+        let (_tx, rx) = mpsc::sync_channel(1);
+        let controls = Controls::new();
+        let mut mix = [0.0; BLOCK_SIZE];
+        let mut channel_mix = [0.0; BLOCK_SIZE];
+        let mut output = vec![0.0; 24_000 * 2];
+        audio_callback(
+            &mut output,
+            &rx,
+            &controls,
+            &mut channels,
+            &mut mix,
+            &mut channel_mix,
+            2,
+        );
+
+        output.into_iter().step_by(2).skip(2_048).collect()
     }
 }
