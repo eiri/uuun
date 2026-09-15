@@ -158,7 +158,7 @@ where
     Ok((tx, controls, stream))
 }
 
-fn audio_callback<T>(
+pub(crate) fn audio_callback<T>(
     output: &mut [T],
     rx: &mpsc::Receiver<EngineMessage>,
     controls: &Controls,

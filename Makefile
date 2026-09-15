@@ -27,6 +27,10 @@ lint:
 build:
 	cargo build --release
 
+.PHONY: benchmark
+benchmark:
+	cargo bench --bench callback
+
 .PHONY: clean
 clean:
 	cargo clean
