@@ -1,6 +1,4 @@
-use crate::dsp::patch::Patch;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum EngineMessage {
     NoteOn {
         channel: usize,
@@ -10,10 +8,6 @@ pub enum EngineMessage {
     NoteOff {
         channel: usize,
         note: u8,
-    },
-    SetPatch {
-        channel: usize,
-        patch: Box<Patch>,
     },
     AllNotesOff {
         channel: usize,
@@ -27,13 +21,5 @@ pub enum EngineMessage {
     },
     ResetControllers {
         channel: usize,
-    },
-    PitchBend {
-        channel: usize,
-        semitones: f64,
-    },
-    ChannelPressure {
-        channel: usize,
-        value: f64,
     },
 }

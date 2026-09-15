@@ -1,5 +1,5 @@
 use crate::dsp::patch::Patch;
-use crate::engine::allocator::VoiceAllocator;
+use crate::engine::{allocator::VoiceAllocator, control::Control};
 
 pub struct Channel {
     pub patch: Patch,
@@ -86,12 +86,38 @@ impl Channel {
         self.set_sustain(false);
     }
 
-    pub fn set_patch(&mut self, patch: Patch) -> Result<(), String> {
-        patch.validate()?;
+    pub fn control(&mut self, control: Control, value: f64) {
+        match control {
+            Control::FilterCutoff => self.patch.filter_cutoff_hz = value,
+            Control::FilterResonance => self.patch.filter_resonance = value,
+            Control::FilterEnvAmount => self.patch.filter_env_amount = value,
+            Control::FilterKeyTrack => self.patch.filter_key_track = value,
+            Control::AmpAttack => self.patch.amp_env.attack = value,
+            Control::AmpDecay => self.patch.amp_env.decay = value,
+            Control::AmpSustain => self.patch.amp_env.sustain = value,
+            Control::AmpRelease => self.patch.amp_env.release = value,
+            Control::FilterAttack => self.patch.filter_env.attack = value,
+            Control::FilterDecay => self.patch.filter_env.decay = value,
+            Control::FilterSustain => self.patch.filter_env.sustain = value,
+            Control::FilterRelease => self.patch.filter_env.release = value,
+            Control::LfoRate => self.patch.lfo_rate_hz = value,
+            Control::LfoDepth => self.patch.lfo_depth = value,
+            Control::Osc1Level => self.patch.osc1_level = value,
+            Control::Osc2Level => self.patch.osc2_level = value,
+            Control::Osc3Level => self.patch.osc3_level = value,
+            Control::NoiseLevel => self.patch.noise_level = value,
+            Control::GlideTime => self.patch.glide_time = value,
+            Control::PitchBend => {
+                self.pitch_bend(value);
+                return;
+            }
+            Control::ChannelPressure => {
+                self.channel_pressure(value);
+                return;
+            }
+        }
 
-        self.patch = patch;
         self.allocator.set_patch(&self.patch);
-        Ok(())
     }
 
     /// Apply a pitch-bend offset (in semitones) to all active voices.
@@ -211,35 +237,5 @@ mod tests {
         assert_eq!(ch.pressure, 0.0);
         assert!(!ch.sustain);
         assert!(!ch.deferred[60]);
-    }
-
-    #[test]
-    fn channel_rejects_invalid_patch() {
-        let mut ch = Channel::new(Patch::default(), 48_000.0);
-        let invalid = Patch {
-            osc1_level: 2.0,
-            ..Default::default()
-        };
-
-        assert!(ch.set_patch(invalid).is_err());
-        assert_eq!(ch.patch.osc1_level, 1.0);
-    }
-
-    #[test]
-    fn channel_patch_swap() {
-        let mut ch = Channel::new(Patch::default(), 48_000.0);
-        ch.note_on(60, 100);
-        let mut buf = [0.0_f64; 128];
-        ch.process(&mut buf, 128);
-        // Swap patch mid-stream — must not panic.
-        let new_patch = Patch {
-            filter_cutoff_hz: 4_000.0,
-            ..Default::default()
-        };
-        ch.set_patch(new_patch).unwrap();
-        buf.fill(0.0);
-        ch.process(&mut buf, 128);
-        let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
-        assert!(peak > 1e-6);
     }
 }

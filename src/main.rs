@@ -79,7 +79,7 @@ fn main() {
     });
 
     let engine_tx = engine.sender();
-    let mut router = MidiRouter::new(patch, engine_tx);
+    let mut router = MidiRouter::new(engine_tx, engine.controls());
 
     thread::spawn(move || {
         while let Ok(ev) = midi_rx.recv() {

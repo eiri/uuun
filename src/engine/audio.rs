@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use cpal::{
     BufferSize, Device, Error, ErrorKind, FromSample, I24, SampleFormat, SizedSample, Stream,
@@ -8,7 +8,7 @@ use cpal::{
 
 use crate::{
     dsp::patch::Patch,
-    engine::{channel::Channel, message::EngineMessage},
+    engine::{channel::Channel, control::Controls, message::EngineMessage},
 };
 
 pub const NUM_CHANNELS: usize = 4; // multitimbral
@@ -19,6 +19,7 @@ const MASTER_GAIN: f64 = 0.5;
 
 pub struct Engine {
     sender: mpsc::SyncSender<EngineMessage>,
+    controls: Arc<Controls>,
     _stream: Stream,
 }
 
@@ -53,25 +54,26 @@ impl Engine {
             buffer_size: BufferSize::Fixed(BLOCK_SIZE as u32),
         };
 
-        let (sender, stream) = match build_stream(&device, config, sample_format, initial_patch) {
-            Ok(result) => result,
-            Err(fixed_err) if fixed_err.kind() == ErrorKind::UnsupportedConfig => {
-                config.buffer_size = BufferSize::Default;
-                build_stream(&device, config, sample_format, initial_patch).map_err(
-                    |default_err| {
-                        format!(
-                            "failed to open {device_name} with {sample_format}, fixed buffer: \
+        let (sender, controls, stream) =
+            match build_stream(&device, config, sample_format, initial_patch) {
+                Ok(result) => result,
+                Err(fixed_err) if fixed_err.kind() == ErrorKind::UnsupportedConfig => {
+                    config.buffer_size = BufferSize::Default;
+                    build_stream(&device, config, sample_format, initial_patch).map_err(
+                        |default_err| {
+                            format!(
+                                "failed to open {device_name} with {sample_format}, fixed buffer: \
                          {fixed_err}; default buffer: {default_err}"
-                        )
-                    },
-                )?
-            }
-            Err(err) => {
-                return Err(format!(
-                    "failed to open {device_name} with {sample_format} and {config:?}: {err}"
-                ));
-            }
-        };
+                            )
+                        },
+                    )?
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "failed to open {device_name} with {sample_format} and {config:?}: {err}"
+                    ));
+                }
+            };
 
         stream
             .play()
@@ -79,18 +81,17 @@ impl Engine {
 
         Ok(Self {
             sender,
+            controls,
             _stream: stream,
         })
     }
 
-    #[allow(dead_code)]
-    pub fn send(&self, msg: EngineMessage) -> bool {
-        self.sender.try_send(msg).is_ok()
-    }
-
-    #[allow(dead_code)]
     pub fn sender(&self) -> mpsc::SyncSender<EngineMessage> {
         self.sender.clone()
+    }
+
+    pub fn controls(&self) -> Arc<Controls> {
+        Arc::clone(&self.controls)
     }
 }
 
@@ -99,7 +100,7 @@ fn build_stream(
     config: StreamConfig,
     format: SampleFormat,
     patch: Patch,
-) -> Result<(mpsc::SyncSender<EngineMessage>, Stream), Error> {
+) -> Result<(mpsc::SyncSender<EngineMessage>, Arc<Controls>, Stream), Error> {
     match format {
         SampleFormat::I8 => build_typed::<i8>(device, config, patch),
         SampleFormat::I16 => build_typed::<i16>(device, config, patch),
@@ -124,13 +125,15 @@ fn build_typed<T>(
     device: &Device,
     config: StreamConfig,
     patch: Patch,
-) -> Result<(mpsc::SyncSender<EngineMessage>, Stream), Error>
+) -> Result<(mpsc::SyncSender<EngineMessage>, Arc<Controls>, Stream), Error>
 where
     T: SizedSample + FromSample<f32>,
 {
     let sample_rate = config.sample_rate as f64;
     let out_chans = config.channels as usize;
     let (tx, rx) = mpsc::sync_channel(256);
+    let controls = Arc::new(Controls::new());
+    let callback_controls = Arc::clone(&controls);
     let mut channels = std::array::from_fn(|_| Channel::new(patch, sample_rate));
     let mut mix = [0.0; BLOCK_SIZE];
     let mut channel_mix = [0.0; BLOCK_SIZE];
@@ -141,34 +144,39 @@ where
             audio_callback(
                 data,
                 &rx,
+                &callback_controls,
                 &mut channels,
                 &mut mix,
                 &mut channel_mix,
                 out_chans,
-                sample_rate,
             );
         },
         |err| eprintln!("[uuun] audio stream error: {err}"),
         None,
     )?;
 
-    Ok((tx, stream))
+    Ok((tx, controls, stream))
 }
 
 fn audio_callback<T>(
     output: &mut [T],
     rx: &mpsc::Receiver<EngineMessage>,
+    controls: &Controls,
     channels: &mut [Channel; NUM_CHANNELS],
     mix_f64: &mut [f64; BLOCK_SIZE],
     channel_mix: &mut [f64; BLOCK_SIZE],
     out_chans: usize,
-    _sample_rate: f64,
 ) where
     T: SizedSample + FromSample<f32>,
 {
     while let Ok(msg) = rx.try_recv() {
         apply_message(channels, msg);
     }
+    controls.drain(|channel, control, value| {
+        if let Some(channel) = channels.get_mut(channel) {
+            channel.control(control, value);
+        }
+    });
 
     // CPAL may provide more frames than requested. Render bounded chunks.
     for block in output.chunks_mut(BLOCK_SIZE * out_chans) {
@@ -207,11 +215,6 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
                 ch.note_off(note);
             }
         }
-        EngineMessage::SetPatch { channel, patch } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                let _ = ch.set_patch(*patch);
-            }
-        }
         EngineMessage::AllNotesOff { channel } => {
             if let Some(ch) = channels.get_mut(channel) {
                 ch.all_notes_off();
@@ -232,16 +235,6 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
                 ch.reset_controllers();
             }
         }
-        EngineMessage::PitchBend { channel, semitones } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.pitch_bend(semitones);
-            }
-        }
-        EngineMessage::ChannelPressure { channel, value } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.channel_pressure(value);
-            }
-        }
     }
 }
 
@@ -256,6 +249,7 @@ mod tests {
         let patch = Patch::default();
         let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
         let (tx, rx) = mpsc::sync_channel(1);
+        let controls = Controls::new();
         tx.send(EngineMessage::NoteOn {
             channel: 0,
             note: 60,
@@ -268,11 +262,11 @@ mod tests {
         audio_callback(
             output,
             &rx,
+            &controls,
             &mut channels,
             &mut mix,
             &mut channel_mix,
             2,
-            48_000.0,
         );
     }
 

@@ -1,8 +1,7 @@
 /// Raw MIDI event received from the hardware port.
 ///
-/// This is the MIDI domain type - distinct from `EngineMessage`.
-/// The router converts `MidiEvent` values into zero or more `EngineMessage`
-/// values, applying CC mapping, and pitch-bend scaling.
+/// This is the MIDI domain type. The router maps it to engine events or
+/// coalesced controls.
 #[derive(Debug, Clone)]
 pub enum MidiEvent {
     NoteOn { channel: u8, note: u8, velocity: u8 },

@@ -1,8 +1,11 @@
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 use crate::{
-    dsp::patch::Patch,
-    engine::{audio::NUM_CHANNELS, message::EngineMessage},
+    engine::{
+        audio::NUM_CHANNELS,
+        control::{Control, Controls},
+        message::EngineMessage,
+    },
     midi::{
         cc_map::{
             ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, CcTarget, RESET_CONTROLLERS_CC, SUSTAIN_CC,
@@ -15,19 +18,17 @@ use crate::{
 /// Maximum pitch-bend range in semitones, +2/-2
 const PITCH_BEND_SEMITONES: f64 = 2.0;
 
-/// Routes `MidiEvent` values (from the MIDI thread) into `EngineMessage`
-/// values (to the audio engine thread).
+/// Routes MIDI events into the engine event queue and control mailboxes.
 pub struct MidiRouter {
-    // Per-channel patch cache
-    patches: Vec<Patch>,
     engine_tx: mpsc::SyncSender<EngineMessage>,
+    controls: Arc<Controls>,
 }
 
 impl MidiRouter {
-    pub fn new(initial_patch: Patch, engine_tx: mpsc::SyncSender<EngineMessage>) -> Self {
+    pub fn new(engine_tx: mpsc::SyncSender<EngineMessage>, controls: Arc<Controls>) -> Self {
         Self {
-            patches: vec![initial_patch; NUM_CHANNELS],
             engine_tx,
+            controls,
         }
     }
 
@@ -76,6 +77,8 @@ impl MidiRouter {
                         return;
                     }
                     RESET_CONTROLLERS_CC => {
+                        self.controls
+                            .clear(ch, &[Control::PitchBend, Control::ChannelPressure]);
                         self.send_critical(EngineMessage::ResetControllers { channel: ch });
                         return;
                     }
@@ -100,10 +103,7 @@ impl MidiRouter {
                     return;
                 }
                 let semitones = value * PITCH_BEND_SEMITONES;
-                self.send(EngineMessage::PitchBend {
-                    channel: ch,
-                    semitones,
-                });
+                self.controls.set(ch, Control::PitchBend, semitones);
             }
 
             MidiEvent::ChannelPressure { channel, value } => {
@@ -111,13 +111,12 @@ impl MidiRouter {
                 if ch >= NUM_CHANNELS {
                     return;
                 }
-                self.send(EngineMessage::ChannelPressure { channel: ch, value });
+                self.controls.set(ch, Control::ChannelPressure, value);
             }
         }
     }
 
     fn send(&self, msg: EngineMessage) {
-        // Continuous controls may be dropped when the engine is behind.
         let _ = self.engine_tx.try_send(msg);
     }
 
@@ -126,78 +125,31 @@ impl MidiRouter {
         let _ = self.engine_tx.send(msg);
     }
 
-    fn apply_cc(&mut self, ch: usize, target: CcTarget, v: f64) {
-        let p = &mut self.patches[ch];
+    fn apply_cc(&self, ch: usize, target: CcTarget, v: f64) {
+        let (control, value) = match target {
+            CcTarget::FilterCutoff => (Control::FilterCutoff, 20.0 * 1000.0_f64.powf(v)),
+            CcTarget::FilterResonance => (Control::FilterResonance, v.clamp(0.0, 0.99)),
+            CcTarget::FilterEnvAmount => (Control::FilterEnvAmount, v),
+            CcTarget::FilterKeyTrack => (Control::FilterKeyTrack, v),
+            CcTarget::AmpAttack => (Control::AmpAttack, map_adsr_time(v)),
+            CcTarget::AmpDecay => (Control::AmpDecay, map_adsr_time(v)),
+            CcTarget::AmpSustain => (Control::AmpSustain, v),
+            CcTarget::AmpRelease => (Control::AmpRelease, map_adsr_time(v)),
+            CcTarget::FilterAttack => (Control::FilterAttack, map_adsr_time(v)),
+            CcTarget::FilterDecay => (Control::FilterDecay, map_adsr_time(v)),
+            CcTarget::FilterSustain => (Control::FilterSustain, v),
+            CcTarget::FilterRelease => (Control::FilterRelease, map_adsr_time(v)),
+            CcTarget::LfoRate => (Control::LfoRate, 0.01 * 3000.0_f64.powf(v)),
+            CcTarget::LfoDepth => (Control::LfoDepth, v),
+            CcTarget::Osc1Level => (Control::Osc1Level, v),
+            CcTarget::Osc2Level => (Control::Osc2Level, v),
+            CcTarget::Osc3Level => (Control::Osc3Level, v),
+            CcTarget::NoiseLevel => (Control::NoiseLevel, v),
+            CcTarget::GlideTime => (Control::GlideTime, v * 4.0),
+            CcTarget::Unassigned => return,
+        };
 
-        match target {
-            CcTarget::FilterCutoff => {
-                // Map 0..1 exponentially to 20 Hz .. 20 kHz.
-                p.filter_cutoff_hz = 20.0 * 1000.0_f64.powf(v);
-            }
-            CcTarget::FilterResonance => {
-                p.filter_resonance = v.clamp(0.0, 0.99);
-            }
-            CcTarget::FilterEnvAmount => {
-                p.filter_env_amount = v;
-            }
-            CcTarget::FilterKeyTrack => {
-                p.filter_key_track = v;
-            }
-            CcTarget::AmpAttack => {
-                p.amp_env.attack = map_adsr_time(v);
-            }
-            CcTarget::AmpDecay => {
-                p.amp_env.decay = map_adsr_time(v);
-            }
-            CcTarget::AmpSustain => {
-                p.amp_env.sustain = v;
-            }
-            CcTarget::AmpRelease => {
-                p.amp_env.release = map_adsr_time(v);
-            }
-            CcTarget::FilterAttack => {
-                p.filter_env.attack = map_adsr_time(v);
-            }
-            CcTarget::FilterDecay => {
-                p.filter_env.decay = map_adsr_time(v);
-            }
-            CcTarget::FilterSustain => {
-                p.filter_env.sustain = v;
-            }
-            CcTarget::FilterRelease => {
-                p.filter_env.release = map_adsr_time(v);
-            }
-            CcTarget::LfoRate => {
-                // 0..1 -> 0.01..30 Hz (exponential feels natural for rate).
-                p.lfo_rate_hz = 0.01 * 3000.0_f64.powf(v);
-            }
-            CcTarget::LfoDepth => {
-                p.lfo_depth = v;
-            }
-            CcTarget::Osc1Level => {
-                p.osc1_level = v;
-            }
-            CcTarget::Osc2Level => {
-                p.osc2_level = v;
-            }
-            CcTarget::Osc3Level => {
-                p.osc3_level = v;
-            }
-            CcTarget::NoiseLevel => {
-                p.noise_level = v;
-            }
-            CcTarget::GlideTime => {
-                // up to 4 seconds
-                p.glide_time = v * 4.0;
-            }
-            CcTarget::Unassigned => {}
-        }
-
-        let patch_copy = *p;
-        self.send(EngineMessage::SetPatch {
-            channel: ch,
-            patch: Box::new(patch_copy),
-        });
+        self.controls.set(ch, control, value);
     }
 }
 
@@ -212,7 +164,7 @@ mod tests {
     #[test]
     fn note_off_survives_full_queue() {
         let (tx, rx) = mpsc::sync_channel(1);
-        let mut router = MidiRouter::new(Patch::default(), tx);
+        let mut router = MidiRouter::new(tx, Arc::new(Controls::new()));
         router.route(MidiEvent::NoteOn {
             channel: 0,
             note: 60,
@@ -238,9 +190,34 @@ mod tests {
     }
 
     #[test]
+    fn controls_keep_latest_when_queue_is_full() {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let controls = Arc::new(Controls::new());
+        let mut router = MidiRouter::new(tx, Arc::clone(&controls));
+        router.route(MidiEvent::NoteOn {
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        });
+
+        for value in [1, 127] {
+            router.route(MidiEvent::ControlChange {
+                channel: 0,
+                cc: 74,
+                value,
+            });
+        }
+
+        assert!(matches!(rx.recv().unwrap(), EngineMessage::NoteOn { .. }));
+        let mut applied = Vec::new();
+        controls.drain(|channel, control, value| applied.push((channel, control, value)));
+        assert_eq!(applied, [(0, Control::FilterCutoff, 20_000.0)]);
+    }
+
+    #[test]
     fn panic_controls_are_forwarded() {
         let (tx, rx) = mpsc::sync_channel(2);
-        let mut router = MidiRouter::new(Patch::default(), tx);
+        let mut router = MidiRouter::new(tx, Arc::new(Controls::new()));
 
         for cc in [ALL_SOUND_OFF_CC, ALL_NOTES_OFF_CC] {
             router.route(MidiEvent::ControlChange {
@@ -263,8 +240,13 @@ mod tests {
     #[test]
     fn sustain_and_reset_are_forwarded() {
         let (tx, rx) = mpsc::sync_channel(3);
-        let mut router = MidiRouter::new(Patch::default(), tx);
+        let controls = Arc::new(Controls::new());
+        let mut router = MidiRouter::new(tx, Arc::clone(&controls));
 
+        router.route(MidiEvent::PitchBend {
+            channel: 2,
+            value: 1.0,
+        });
         for value in [127, 0] {
             router.route(MidiEvent::ControlChange {
                 channel: 2,
@@ -296,5 +278,9 @@ mod tests {
             rx.recv().unwrap(),
             EngineMessage::ResetControllers { channel: 2 }
         ));
+
+        let mut applied = 0;
+        controls.drain(|_, _, _| applied += 1);
+        assert_eq!(applied, 0);
     }
 }
