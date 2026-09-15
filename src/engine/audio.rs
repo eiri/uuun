@@ -14,6 +14,9 @@ use crate::{
 pub const NUM_CHANNELS: usize = 4; // multitimbral
 pub const BLOCK_SIZE: usize = 256; // preferred buffer size in frames
 
+const CHANNEL_GAIN: f64 = 0.5;
+const MASTER_GAIN: f64 = 0.5;
+
 pub struct Engine {
     sender: mpsc::SyncSender<EngineMessage>,
     _stream: Stream,
@@ -21,6 +24,10 @@ pub struct Engine {
 
 impl Engine {
     pub fn start(initial_patch: Patch) -> Result<Self, String> {
+        initial_patch
+            .validate()
+            .map_err(|err| format!("invalid initial patch: {err}"))?;
+
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -126,11 +133,20 @@ where
     let (tx, rx) = mpsc::sync_channel(256);
     let mut channels = std::array::from_fn(|_| Channel::new(patch, sample_rate));
     let mut mix = [0.0; BLOCK_SIZE];
+    let mut channel_mix = [0.0; BLOCK_SIZE];
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _info| {
-            audio_callback(data, &rx, &mut channels, &mut mix, out_chans, sample_rate);
+            audio_callback(
+                data,
+                &rx,
+                &mut channels,
+                &mut mix,
+                &mut channel_mix,
+                out_chans,
+                sample_rate,
+            );
         },
         |err| eprintln!("[uuun] audio stream error: {err}"),
         None,
@@ -144,6 +160,7 @@ fn audio_callback<T>(
     rx: &mpsc::Receiver<EngineMessage>,
     channels: &mut [Channel; NUM_CHANNELS],
     mix_f64: &mut [f64; BLOCK_SIZE],
+    channel_mix: &mut [f64; BLOCK_SIZE],
     out_chans: usize,
     _sample_rate: f64,
 ) where
@@ -159,11 +176,17 @@ fn audio_callback<T>(
         mix_f64[..frames].fill(0.0);
 
         for channel in channels.iter_mut() {
-            channel.process(&mut mix_f64[..frames], frames);
+            channel_mix[..frames].fill(0.0);
+            channel.process(&mut channel_mix[..frames], frames);
+
+            for (mix, sample) in mix_f64.iter_mut().zip(channel_mix.iter()).take(frames) {
+                *mix += sample * CHANNEL_GAIN;
+            }
         }
 
         for (frame, sample) in block.chunks_mut(out_chans).zip(mix_f64.iter()) {
-            frame.fill(T::from_sample(sample.clamp(-1.0, 1.0) as f32));
+            let sample = (sample * MASTER_GAIN).clamp(-1.0, 1.0) as f32;
+            frame.fill(T::from_sample(sample));
         }
     }
 }
@@ -186,7 +209,7 @@ fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
         }
         EngineMessage::SetPatch { channel, patch } => {
             if let Some(ch) = channels.get_mut(channel) {
-                ch.set_patch(*patch);
+                let _ = ch.set_patch(*patch);
             }
         }
         EngineMessage::AllNotesOff { channel } => {
@@ -231,7 +254,16 @@ mod tests {
         .unwrap();
 
         let mut mix = [0.0; BLOCK_SIZE];
-        audio_callback(output, &rx, &mut channels, &mut mix, 2, 48_000.0);
+        let mut channel_mix = [0.0; BLOCK_SIZE];
+        audio_callback(
+            output,
+            &rx,
+            &mut channels,
+            &mut mix,
+            &mut channel_mix,
+            2,
+            48_000.0,
+        );
     }
 
     #[test]
@@ -241,6 +273,8 @@ mod tests {
         render(&mut output);
 
         assert!(output.iter().any(|sample| *sample != 0.0));
+        let peak = output.iter().copied().map(f32::abs).fold(0.0, f32::max);
+        assert!(peak <= (CHANNEL_GAIN * MASTER_GAIN) as f32);
     }
 
     #[test]

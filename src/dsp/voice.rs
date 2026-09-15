@@ -188,6 +188,9 @@ impl Voice {
             0.0
         };
 
+        let source_level = p.osc1_level + p.osc2_level + p.osc3_level + p.noise_level;
+        let source_gain = 1.0 / source_level.max(1.0);
+
         let mut mix_buf = [0.0_f64; 512];
         for i in 0..n {
             let base = freq_buf[i];
@@ -231,11 +234,13 @@ impl Voice {
                 self.sample_rate,
             );
 
-            mix_buf[i] = s1[0] * p.osc1_level + s2[0] * p.osc2_level + s3[0] * p.osc3_level;
+            mix_buf[i] =
+                (s1[0] * p.osc1_level + s2[0] * p.osc2_level + s3[0] * p.osc3_level) * source_gain;
         }
 
         if p.noise_level > 1e-6 {
-            self.noise.process_white(&mut mix_buf, n, p.noise_level);
+            self.noise
+                .process_white(&mut mix_buf, n, p.noise_level * source_gain);
         }
 
         let mut fenv_buf = [0.0_f64; 512];
@@ -416,6 +421,45 @@ mod tests {
             .map(f64::abs)
             .fold(0.0_f64, f64::max);
         assert!(peak > 1e-6, "silent after set_patch");
+    }
+
+    #[test]
+    fn source_mix_keeps_headroom() {
+        let mut single = bass_patch();
+        single.osc2_level = 0.0;
+        single.osc3_level = 0.0;
+
+        let stacked = Patch {
+            osc2_waveform: single.osc1_waveform,
+            osc2_octave: single.osc1_octave,
+            osc2_semitone: single.osc1_semitone,
+            osc2_detune_ct: single.osc1_detune_ct,
+            osc2_level: 1.0,
+            osc3_waveform: single.osc1_waveform,
+            osc3_octave: single.osc1_octave,
+            osc3_semitone: single.osc1_semitone,
+            osc3_detune_ct: single.osc1_detune_ct,
+            osc3_level: 1.0,
+            ..single
+        };
+
+        let render = |patch: Patch| {
+            let mut voice = Voice::new(&patch, 48_000.0);
+            let mut output = [0.0; 256];
+            voice.note_on(60, 127, &patch, 48_000.0);
+            voice.process(&mut output, 256);
+            output
+        };
+        let difference = render(single)
+            .iter()
+            .zip(render(stacked))
+            .map(|(single, stacked)| (single - stacked).abs())
+            .fold(0.0_f64, f64::max);
+
+        assert!(
+            difference < 1e-12,
+            "source normalization differs by {difference}"
+        );
     }
 
     #[test]

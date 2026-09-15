@@ -40,9 +40,12 @@ impl Channel {
         self.allocator.all_sound_off();
     }
 
-    pub fn set_patch(&mut self, patch: Patch) {
+    pub fn set_patch(&mut self, patch: Patch) -> Result<(), String> {
+        patch.validate()?;
+
         self.patch = patch;
         self.allocator.set_patch(&self.patch);
+        Ok(())
     }
 
     /// Apply a pitch-bend offset (in semitones) to all active voices.
@@ -119,6 +122,18 @@ mod tests {
     }
 
     #[test]
+    fn channel_rejects_invalid_patch() {
+        let mut ch = Channel::new(Patch::default(), 48_000.0);
+        let invalid = Patch {
+            osc1_level: 2.0,
+            ..Default::default()
+        };
+
+        assert!(ch.set_patch(invalid).is_err());
+        assert_eq!(ch.patch.osc1_level, 1.0);
+    }
+
+    #[test]
     fn channel_patch_swap() {
         let mut ch = Channel::new(Patch::default(), 48_000.0);
         ch.note_on(60, 100);
@@ -129,7 +144,7 @@ mod tests {
             filter_cutoff_hz: 4_000.0,
             ..Default::default()
         };
-        ch.set_patch(new_patch);
+        ch.set_patch(new_patch).unwrap();
         buf.fill(0.0);
         ch.process(&mut buf, 128);
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
