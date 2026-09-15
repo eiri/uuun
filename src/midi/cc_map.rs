@@ -93,3 +93,39 @@ pub fn cc_target(cc: u8) -> CcTarget {
         _ => CcTarget::Unassigned,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_assigned_controllers() {
+        let mappings = [
+            (5, CcTarget::GlideTime),
+            (71, CcTarget::FilterResonance),
+            (72, CcTarget::AmpRelease),
+            (73, CcTarget::AmpAttack),
+            (74, CcTarget::FilterCutoff),
+            (75, CcTarget::AmpDecay),
+            (76, CcTarget::LfoRate),
+            (77, CcTarget::LfoDepth),
+            (79, CcTarget::AmpSustain),
+            (85, CcTarget::FilterKeyTrack),
+            (86, CcTarget::FilterEnvAmount),
+            (102, CcTarget::FilterAttack),
+            (103, CcTarget::FilterDecay),
+            (104, CcTarget::FilterSustain),
+            (105, CcTarget::FilterRelease),
+            (106, CcTarget::Osc1Level),
+            (107, CcTarget::Osc2Level),
+            (108, CcTarget::Osc3Level),
+            (109, CcTarget::NoiseLevel),
+        ];
+
+        for (cc, target) in mappings {
+            assert_eq!(cc_target(cc), target, "CC {cc}");
+        }
+        assert_eq!(cc_target(0), CcTarget::Unassigned);
+        assert_eq!(cc_target(127), CcTarget::Unassigned);
+    }
+}

@@ -164,18 +164,23 @@ mod tests {
     }
 
     #[test]
-    fn envelope_reaches_sustain() {
-        let mut env = Envelope::new(48_000.0);
+    fn envelope_follows_adsr_shape() {
+        let sr = 48_000.0;
+        let mut env = Envelope::new(sr);
         let p = default_params();
         env.note_on();
 
-        let run_samples = ((p.attack + p.decay) * 48_000.0) as usize + 100;
-        let mut last = 0.0;
-        for _ in 0..run_samples {
-            last = env.tick(&p);
+        let attack = (p.attack * sr) as usize;
+        let decay = (p.decay * sr) as usize;
+        let mut values = Vec::with_capacity(attack + decay + 2);
+        for _ in 0..attack + decay + 2 {
+            values.push(env.tick(&p));
         }
 
-        assert!((last - p.sustain).abs() < 0.02, "sustain level = {last}");
+        assert!((values[attack / 2 - 1] - 0.5).abs() < 1e-12);
+        assert!((values[attack - 1] - 1.0).abs() < 1e-12);
+        assert!((values[attack + decay / 2] - 0.85).abs() < 1e-4);
+        assert!((values[attack + decay + 1] - p.sustain).abs() < 1e-12);
     }
 
     #[test]
@@ -191,14 +196,16 @@ mod tests {
 
         env.note_off();
 
-        let rel = (p.release * 48_000.0) as usize + 200;
-        for _ in 0..rel {
+        let rel = (p.release * 48_000.0) as usize;
+        let mut midpoint = 0.0;
+        for _ in 0..=rel / 2 {
+            midpoint = env.tick(&p);
+        }
+        assert!((midpoint - p.sustain * 0.5).abs() < 1e-12);
+
+        for _ in 0..=rel / 2 {
             env.tick(&p);
         }
-
-        assert!(
-            env.is_finished(),
-            "envelope should be idle after full release"
-        );
+        assert!(env.is_finished(), "envelope should finish on time");
     }
 }

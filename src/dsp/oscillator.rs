@@ -147,6 +147,21 @@ mod tests {
     }
 
     #[test]
+    fn sine_frequency_matches_request() {
+        let buf = render(Waveform::Sine);
+        let crossings: Vec<usize> = buf
+            .windows(2)
+            .enumerate()
+            .filter_map(|(i, pair)| (pair[0] <= 0.0 && pair[1] > 0.0).then_some(i + 1))
+            .collect();
+        let periods = (crossings.len() - 1) as f64;
+        let samples = (*crossings.last().unwrap() - *crossings.first().unwrap()) as f64;
+        let measured = SR * periods / samples;
+
+        assert!((measured - 440.0).abs() < 0.1, "frequency = {measured}");
+    }
+
+    #[test]
     fn no_nan_or_inf() {
         for wf in [
             Waveform::Sine,

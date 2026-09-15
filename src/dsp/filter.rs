@@ -126,7 +126,11 @@ mod tests {
         rms_low = (rms_low / n as f64).sqrt();
         rms_high = (rms_high / n as f64).sqrt();
 
-        // Low-cutoff filter should attenuate significantly.
+        // Require both useful passband gain and strong stopband attenuation.
+        assert!(
+            (0.04..0.08).contains(&rms_high),
+            "unexpected passband RMS: {rms_high:.4}"
+        );
         assert!(
             rms_low < rms_high * 0.1,
             "filter not attenuating: rms_low={rms_low:.4}, rms_high={rms_high:.4}"

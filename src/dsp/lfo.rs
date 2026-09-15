@@ -104,17 +104,17 @@ mod tests {
     }
 
     #[test]
-    fn sine_lfo_one_cycle() {
+    fn sine_lfo_follows_one_cycle() {
         let mut lfo = Lfo::new();
         let sr = 48_000.0;
-        let rate = 1.0; // 1 Hz
-        let total = sr as usize;
-        let mut values = Vec::with_capacity(total);
-        for _ in 0..total {
-            values.push(lfo.tick(rate, sr, LfoWaveform::Sine));
+        let mut values = Vec::with_capacity(sr as usize);
+        for _ in 0..sr as usize {
+            values.push(lfo.tick(1.0, sr, LfoWaveform::Sine));
         }
-        // After exactly one cycle, phase should be near 0 again.
-        let peak: f64 = values.iter().cloned().map(f64::abs).fold(0.0, f64::max);
-        assert!(peak > 0.99, "sine peak = {peak}");
+
+        for (index, expected) in [(0, 0.0), (12_000, 1.0), (24_000, 0.0), (36_000, -1.0)] {
+            assert!((values[index] - expected).abs() < 1e-9);
+        }
+        assert!(lfo.tick(1.0, sr, LfoWaveform::Sine).abs() < 1e-9);
     }
 }

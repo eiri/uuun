@@ -355,55 +355,80 @@ mod tests {
     }
 
     #[test]
-    fn higher_note_brighter() {
+    fn key_tracking_brightens_high_notes() {
         let sr = 48_000.0;
-        let mut p = bass_patch();
-        p.filter_key_track = 1.0;
-        p.filter_env_amount = 0.0;
-        p.amp_env = AdsrParams {
+        let mut patch = bass_patch();
+        patch.filter_cutoff_hz = 400.0;
+        patch.filter_env_amount = 0.0;
+        patch.amp_env = AdsrParams {
             attack: 0.001,
             decay: 0.0,
             sustain: 1.0,
             release: 0.1,
         };
 
-        let measure_peak = |note: u8| {
-            let mut v = Voice::new(&p, sr);
-            v.note_on(note, 100, &p);
-            let mut buf = [0.0_f64; 512];
-            let mut peak = 0.0_f64;
-            for _ in 0..50 {
+        let measure_rms = |key_track: f64| {
+            let patch = Patch {
+                filter_key_track: key_track,
+                ..patch
+            };
+            let mut voice = Voice::new(&patch, sr);
+            let mut buf = [0.0_f64; 256];
+            voice.note_on(84, 127, &patch);
+            for _ in 0..20 {
                 buf.fill(0.0);
-                v.process(&mut buf, 128);
-                peak = peak.max(buf[..128].iter().cloned().map(f64::abs).fold(0.0, f64::max));
+                voice.process(&mut buf, 256);
             }
-            peak
+
+            (buf.iter().map(|sample| sample * sample).sum::<f64>() / buf.len() as f64).sqrt()
         };
-        assert!(measure_peak(36) > 1e-4, "low note silent");
-        assert!(measure_peak(84) > 1e-4, "high note silent");
+        let fixed = measure_rms(0.0);
+        let tracked = measure_rms(1.0);
+
+        assert!(
+            tracked > fixed * 2.0,
+            "key tracking had little effect: fixed={fixed:.4}, tracked={tracked:.4}"
+        );
     }
 
     #[test]
     fn set_patch_updates_timbre() {
         let sr = 48_000.0;
-        let mut p = bass_patch();
-        let mut v = Voice::new(&p, sr);
-        v.note_on(60, 100, &p);
-        let mut buf = [0.0_f64; 512];
+        let saw = bass_patch();
+        let square = Patch {
+            osc1_waveform: Waveform::Square,
+            ..saw
+        };
+        let mut unchanged = Voice::new(&saw, sr);
+        let mut changed = Voice::new(&saw, sr);
+        unchanged.note_on(60, 100, &saw);
+        changed.note_on(60, 100, &saw);
+
+        let mut unchanged_buf = [0.0_f64; 128];
+        let mut changed_buf = [0.0_f64; 128];
         for _ in 0..10 {
-            buf.fill(0.0);
-            v.process(&mut buf, 128);
+            unchanged_buf.fill(0.0);
+            changed_buf.fill(0.0);
+            unchanged.process(&mut unchanged_buf, 128);
+            changed.process(&mut changed_buf, 128);
         }
-        p.osc1_waveform = Waveform::Square;
-        v.apply_patch(&p);
-        buf.fill(0.0);
-        v.process(&mut buf, 128);
-        let peak = buf[..128]
+
+        changed.apply_patch(&square);
+        unchanged_buf.fill(0.0);
+        changed_buf.fill(0.0);
+        unchanged.process(&mut unchanged_buf, 128);
+        changed.process(&mut changed_buf, 128);
+        let difference = unchanged_buf
             .iter()
-            .cloned()
-            .map(f64::abs)
-            .fold(0.0_f64, f64::max);
-        assert!(peak > 1e-6, "silent after set_patch");
+            .zip(changed_buf)
+            .map(|(unchanged, changed)| (unchanged - changed).powi(2))
+            .sum::<f64>()
+            .sqrt();
+
+        assert!(
+            difference > 0.1,
+            "waveform change difference = {difference}"
+        );
     }
 
     #[test]

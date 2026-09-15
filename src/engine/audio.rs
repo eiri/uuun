@@ -271,6 +271,20 @@ mod tests {
     }
 
     #[test]
+    fn invalid_patch_fails_before_audio_setup() {
+        let patch = Patch {
+            filter_cutoff_hz: f64::NAN,
+            ..Patch::default()
+        };
+        let error = Engine::start(patch).err().expect("invalid patch accepted");
+
+        assert_eq!(
+            error,
+            "invalid initial patch: filter_cutoff_hz must be within 20..=20000"
+        );
+    }
+
+    #[test]
     fn callback_handles_large_blocks() {
         let frames = BLOCK_SIZE * 3;
         let mut output = vec![0.0_f32; frames * 2];

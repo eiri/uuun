@@ -261,6 +261,59 @@ mod tests {
     }
 
     #[test]
+    fn mapped_cc_endpoints_are_applied() {
+        let endpoints = [
+            (5, Control::GlideTime, 0.0, 4.0),
+            (71, Control::FilterResonance, 0.0, 0.99),
+            (72, Control::AmpRelease, 0.001, 10.0),
+            (73, Control::AmpAttack, 0.001, 10.0),
+            (74, Control::FilterCutoff, 20.0, 20_000.0),
+            (75, Control::AmpDecay, 0.001, 10.0),
+            (76, Control::LfoRate, 0.01, 30.0),
+            (77, Control::LfoDepth, 0.0, 1.0),
+            (79, Control::AmpSustain, 0.0, 1.0),
+            (85, Control::FilterKeyTrack, 0.0, 1.0),
+            (86, Control::FilterEnvAmount, 0.0, 1.0),
+            (102, Control::FilterAttack, 0.001, 10.0),
+            (103, Control::FilterDecay, 0.001, 10.0),
+            (104, Control::FilterSustain, 0.0, 1.0),
+            (105, Control::FilterRelease, 0.001, 10.0),
+            (106, Control::Osc1Level, 0.0, 1.0),
+            (107, Control::Osc2Level, 0.0, 1.0),
+            (108, Control::Osc3Level, 0.0, 1.0),
+            (109, Control::NoiseLevel, 0.0, 1.0),
+        ];
+
+        for (cc, control, low, high) in endpoints {
+            assert_cc_value(cc, 0, control, low);
+            assert_cc_value(cc, 127, control, high);
+        }
+    }
+
+    fn assert_cc_value(cc: u8, input: u8, expected_control: Control, expected_value: f64) {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let controls = Arc::new(Controls::new());
+        let router = MidiRouter::new(tx, Arc::clone(&controls));
+        router.route(MidiEvent::ControlChange {
+            channel: 0,
+            cc,
+            value: input,
+        });
+
+        let mut applied = Vec::new();
+        controls.drain(|channel, control, value| applied.push((channel, control, value)));
+        assert_eq!(applied.len(), 1, "CC {cc} value {input}");
+
+        let (channel, control, value) = applied[0];
+        assert_eq!(channel, 0);
+        assert_eq!(control, expected_control, "CC {cc}");
+        assert!(
+            (value - expected_value).abs() < 1e-9,
+            "CC {cc} value {input}: {value}, expected {expected_value}"
+        );
+    }
+
+    #[test]
     fn panic_controls_are_forwarded() {
         let (tx, rx) = mpsc::sync_channel(2);
         let router = MidiRouter::new(tx, Arc::new(Controls::new()));
