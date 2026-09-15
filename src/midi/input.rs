@@ -1,24 +1,19 @@
-use std::sync::mpsc;
-
 use midir::{Ignore, MidiInput, MidiInputConnection};
 
 use crate::midi::{
-    cc_map::{ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, RESET_CONTROLLERS_CC, SUSTAIN_CC},
     message::MidiEvent,
+    router::{MidiDiagnostics, MidiRouter},
 };
 
 /// Owns the MIDI input connection.  Drop to close the port.
 pub struct MidiManager {
     /// Keeping the connection alive for the lifetime of this struct.
     _connection: MidiInputConnection<()>,
+    diagnostics: MidiDiagnostics,
 }
 
 impl MidiManager {
-    // Unknown or malformed messages are silently ignored.
-    pub fn start(
-        tx: mpsc::SyncSender<MidiEvent>,
-        port_index: Option<usize>,
-    ) -> Result<Self, String> {
+    pub fn start(router: MidiRouter, port_index: Option<usize>) -> Result<Self, String> {
         let mut midi_in = MidiInput::new("uuun-midi-in").map_err(|e| e.to_string())?;
         // Do not filter SysEx, timing, or active-sensing bytes so we see
         // everything, ignore it at wmidi level.
@@ -53,15 +48,17 @@ impl MidiManager {
 
         println!("Connecting to MIDI port [{idx}]: {port_name}");
 
+        let diagnostics = router.diagnostics();
         let connection = midi_in
             .connect(
                 port,
                 "uuun-conn",
                 move |_timestamp_us, bytes, _| {
+                    // Ignore unknown or malformed messages.
                     if let Ok(msg) = wmidi::MidiMessage::try_from(bytes)
                         && let Some(event) = decode(msg)
                     {
-                        forward(&tx, event);
+                        router.route(event);
                     }
                 },
                 (),
@@ -70,28 +67,13 @@ impl MidiManager {
 
         Ok(Self {
             _connection: connection,
+            diagnostics,
         })
     }
-}
 
-fn forward(tx: &mpsc::SyncSender<MidiEvent>, event: MidiEvent) {
-    if must_deliver(&event) {
-        // Releases may block briefly, but are never dropped.
-        let _ = tx.send(event);
-    } else {
-        let _ = tx.try_send(event);
+    pub fn diagnostics(&self) -> MidiDiagnostics {
+        self.diagnostics.clone()
     }
-}
-
-fn must_deliver(event: &MidiEvent) -> bool {
-    matches!(
-        event,
-        MidiEvent::NoteOff { .. }
-            | MidiEvent::ControlChange {
-                cc: SUSTAIN_CC | ALL_SOUND_OFF_CC | RESET_CONTROLLERS_CC | ALL_NOTES_OFF_CC,
-                ..
-            }
-    )
 }
 
 fn decode(msg: wmidi::MidiMessage<'_>) -> Option<MidiEvent> {
@@ -141,68 +123,5 @@ fn decode(msg: wmidi::MidiMessage<'_>) -> Option<MidiEvent> {
             value: u8::from(pressure) as f64 / 127.0,
         }),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn note_off_survives_full_queue() {
-        let (tx, rx) = mpsc::sync_channel(1);
-        tx.send(MidiEvent::NoteOn {
-            channel: 0,
-            note: 60,
-            velocity: 100,
-        })
-        .unwrap();
-
-        let handle = std::thread::spawn(move || {
-            forward(
-                &tx,
-                MidiEvent::NoteOff {
-                    channel: 0,
-                    note: 60,
-                },
-            );
-        });
-
-        assert!(matches!(rx.recv().unwrap(), MidiEvent::NoteOn { .. }));
-        assert!(matches!(
-            rx.recv().unwrap(),
-            MidiEvent::NoteOff {
-                channel: 0,
-                note: 60
-            }
-        ));
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn releases_and_panics_must_be_delivered() {
-        assert!(must_deliver(&MidiEvent::NoteOff {
-            channel: 0,
-            note: 60,
-        }));
-
-        for cc in [
-            SUSTAIN_CC,
-            ALL_SOUND_OFF_CC,
-            RESET_CONTROLLERS_CC,
-            ALL_NOTES_OFF_CC,
-        ] {
-            assert!(must_deliver(&MidiEvent::ControlChange {
-                channel: 0,
-                cc,
-                value: 0,
-            }));
-        }
-
-        assert!(!must_deliver(&MidiEvent::ControlChange {
-            channel: 0,
-            cc: 74,
-            value: 64,
-        }));
     }
 }

@@ -2,7 +2,7 @@ mod dsp;
 mod engine;
 mod midi;
 
-use std::{env, sync::mpsc, thread};
+use std::{env, thread, time::Duration};
 
 use dsp::{
     envelope::AdsrParams,
@@ -12,7 +12,7 @@ use dsp::{
     patch::Patch,
 };
 use engine::audio::Engine;
-use midi::{MidiEvent, MidiManager, router::MidiRouter};
+use midi::{MidiManager, router::MidiRouter};
 
 fn main() {
     let patch = Patch {
@@ -70,20 +70,24 @@ fn main() {
 
     let port_index: Option<usize> = env::args().nth(1).and_then(|s| s.parse().ok());
 
-    let (midi_tx, midi_rx) = mpsc::sync_channel::<MidiEvent>(1024);
-
-    let _midi_manager = MidiManager::start(midi_tx, port_index).unwrap_or_else(|e| {
+    let router = MidiRouter::new(engine.sender(), engine.controls());
+    let midi_manager = MidiManager::start(router, port_index).unwrap_or_else(|e| {
         eprintln!("MIDI initialisation failed: {e}");
         eprintln!("No MIDI input will be available.");
         std::process::exit(1);
     });
 
-    let engine_tx = engine.sender();
-    let mut router = MidiRouter::new(engine_tx, engine.controls());
-
+    let diagnostics = midi_manager.diagnostics();
     thread::spawn(move || {
-        while let Ok(ev) = midi_rx.recv() {
-            router.route(ev);
+        let mut reported = 0;
+
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            let dropped = diagnostics.dropped_note_ons();
+            if dropped != reported {
+                eprintln!("MIDI note-ons dropped: {dropped}");
+                reported = dropped;
+            }
         }
     });
 

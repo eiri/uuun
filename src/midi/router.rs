@@ -1,4 +1,8 @@
-use std::sync::{Arc, mpsc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc,
+};
 
 use crate::{
     engine::{
@@ -18,10 +22,23 @@ use crate::{
 /// Maximum pitch-bend range in semitones, +2/-2
 const PITCH_BEND_SEMITONES: f64 = 2.0;
 
+/// Counts note-ons rejected by a full engine queue.
+#[derive(Clone, Default)]
+pub struct MidiDiagnostics {
+    dropped_note_ons: Arc<AtomicU64>,
+}
+
+impl MidiDiagnostics {
+    pub fn dropped_note_ons(&self) -> u64 {
+        self.dropped_note_ons.load(Ordering::Relaxed)
+    }
+}
+
 /// Routes MIDI events into the engine event queue and control mailboxes.
 pub struct MidiRouter {
     engine_tx: mpsc::SyncSender<EngineMessage>,
     controls: Arc<Controls>,
+    diagnostics: MidiDiagnostics,
 }
 
 impl MidiRouter {
@@ -29,10 +46,15 @@ impl MidiRouter {
         Self {
             engine_tx,
             controls,
+            diagnostics: MidiDiagnostics::default(),
         }
     }
 
-    pub fn route(&mut self, event: MidiEvent) {
+    pub fn diagnostics(&self) -> MidiDiagnostics {
+        self.diagnostics.clone()
+    }
+
+    pub fn route(&self, event: MidiEvent) {
         match event {
             MidiEvent::NoteOn {
                 channel,
@@ -44,7 +66,7 @@ impl MidiRouter {
                     return;
                 }
 
-                self.send(EngineMessage::NoteOn {
+                self.send_note_on(EngineMessage::NoteOn {
                     channel: ch,
                     note,
                     velocity,
@@ -116,8 +138,15 @@ impl MidiRouter {
         }
     }
 
-    fn send(&self, msg: EngineMessage) {
-        let _ = self.engine_tx.try_send(msg);
+    fn send_note_on(&self, msg: EngineMessage) {
+        if matches!(
+            self.engine_tx.try_send(msg),
+            Err(mpsc::TrySendError::Full(_))
+        ) {
+            self.diagnostics
+                .dropped_note_ons
+                .fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn send_critical(&self, msg: EngineMessage) {
@@ -164,7 +193,7 @@ mod tests {
     #[test]
     fn note_off_survives_full_queue() {
         let (tx, rx) = mpsc::sync_channel(1);
-        let mut router = MidiRouter::new(tx, Arc::new(Controls::new()));
+        let router = MidiRouter::new(tx, Arc::new(Controls::new()));
         router.route(MidiEvent::NoteOn {
             channel: 0,
             note: 60,
@@ -190,10 +219,27 @@ mod tests {
     }
 
     #[test]
+    fn note_on_drops_are_counted() {
+        let (tx, _rx) = mpsc::sync_channel(1);
+        let router = MidiRouter::new(tx, Arc::new(Controls::new()));
+        let diagnostics = router.diagnostics();
+
+        for note in [60, 61] {
+            router.route(MidiEvent::NoteOn {
+                channel: 0,
+                note,
+                velocity: 100,
+            });
+        }
+
+        assert_eq!(diagnostics.dropped_note_ons(), 1);
+    }
+
+    #[test]
     fn controls_keep_latest_when_queue_is_full() {
         let (tx, rx) = mpsc::sync_channel(1);
         let controls = Arc::new(Controls::new());
-        let mut router = MidiRouter::new(tx, Arc::clone(&controls));
+        let router = MidiRouter::new(tx, Arc::clone(&controls));
         router.route(MidiEvent::NoteOn {
             channel: 0,
             note: 60,
@@ -217,7 +263,7 @@ mod tests {
     #[test]
     fn panic_controls_are_forwarded() {
         let (tx, rx) = mpsc::sync_channel(2);
-        let mut router = MidiRouter::new(tx, Arc::new(Controls::new()));
+        let router = MidiRouter::new(tx, Arc::new(Controls::new()));
 
         for cc in [ALL_SOUND_OFF_CC, ALL_NOTES_OFF_CC] {
             router.route(MidiEvent::ControlChange {
@@ -241,7 +287,7 @@ mod tests {
     fn sustain_and_reset_are_forwarded() {
         let (tx, rx) = mpsc::sync_channel(3);
         let controls = Arc::new(Controls::new());
-        let mut router = MidiRouter::new(tx, Arc::clone(&controls));
+        let router = MidiRouter::new(tx, Arc::clone(&controls));
 
         router.route(MidiEvent::PitchBend {
             channel: 2,
