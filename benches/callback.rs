@@ -1,24 +1,18 @@
-#![allow(dead_code, unused_imports)]
-
-#[path = "../src/dsp/mod.rs"]
-mod dsp;
-#[path = "../src/engine/mod.rs"]
-mod engine;
-#[path = "../src/parameter.rs"]
-mod parameter;
-
 use std::{
     hint::black_box,
     sync::{Arc, mpsc},
     time::Instant,
 };
 
-use dsp::patch::{OscParams, Patch};
-use engine::{
-    audio::{BLOCK_SIZE, NUM_CHANNELS, audio_callback},
-    channel::Channel,
-    control::Controls,
-    message::EngineMessage,
+use uuun::{
+    dsp::patch::{OscParams, Patch},
+    engine::{
+        allocator::MAX_VOICES,
+        audio::AudioCallback,
+        control::Controls,
+        message::EngineMessage,
+        synth::{BLOCK_SIZE, Synth},
+    },
 };
 
 const RUNS: usize = 2_000;
@@ -27,12 +21,8 @@ const OUT_CHANNELS: usize = 2;
 
 struct Callback {
     _tx: mpsc::SyncSender<EngineMessage>,
-    rx: mpsc::Receiver<EngineMessage>,
-    controls: Arc<Controls>,
-    channels: [Channel; NUM_CHANNELS],
+    callback: AudioCallback,
     output: [f32; BLOCK_SIZE * OUT_CHANNELS],
-    mix: [f64; BLOCK_SIZE],
-    channel_mix: [f64; BLOCK_SIZE],
 }
 
 impl Callback {
@@ -49,33 +39,25 @@ impl Callback {
             ..Patch::default()
         };
         let (tx, rx) = mpsc::sync_channel(256);
-        let mut channels = std::array::from_fn(|_| Channel::new(patch, sample_rate));
+        let mut synth = Synth::new(patch, sample_rate);
 
         for voice in 0..voices {
-            channels[voice / 8].note_on(48 + (voice % 8) as u8, 127);
+            synth.handle(EngineMessage::NoteOn {
+                channel: voice / MAX_VOICES,
+                note: 48 + (voice % MAX_VOICES) as u8,
+                velocity: 127,
+            });
         }
 
         Self {
             _tx: tx,
-            rx,
-            controls: Arc::new(Controls::new()),
-            channels,
+            callback: AudioCallback::new(rx, Arc::new(Controls::new()), synth, OUT_CHANNELS),
             output: [0.0; BLOCK_SIZE * OUT_CHANNELS],
-            mix: [0.0; BLOCK_SIZE],
-            channel_mix: [0.0; BLOCK_SIZE],
         }
     }
 
     fn run(&mut self) {
-        audio_callback(
-            &mut self.output,
-            &self.rx,
-            &self.controls,
-            &mut self.channels,
-            &mut self.mix,
-            &mut self.channel_mix,
-            OUT_CHANNELS,
-        );
+        self.callback.render(&mut self.output);
         black_box(&self.output);
     }
 }
