@@ -6,3 +6,6 @@ pub mod noise;
 pub mod oscillator;
 pub mod patch;
 pub mod voice;
+
+#[cfg(test)]
+pub(crate) mod reference;

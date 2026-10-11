@@ -125,3 +125,81 @@ fn decode(msg: wmidi::MidiMessage<'_>) -> Option<MidiEvent> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(bytes: &[u8]) -> Option<MidiEvent> {
+        wmidi::MidiMessage::try_from(bytes).ok().and_then(decode)
+    }
+
+    #[test]
+    fn decodes_notes_and_controls() {
+        assert!(matches!(
+            parse(&[0x93, 60, 100]),
+            Some(MidiEvent::NoteOn {
+                channel: 3,
+                note: 60,
+                velocity: 100
+            })
+        ));
+        for bytes in [[0x83, 60, 64], [0x93, 60, 0]] {
+            assert!(matches!(
+                parse(&bytes),
+                Some(MidiEvent::NoteOff {
+                    channel: 3,
+                    note: 60
+                })
+            ));
+        }
+        assert!(matches!(
+            parse(&[0xb2, 74, 127]),
+            Some(MidiEvent::ControlChange {
+                channel: 2,
+                cc: 74,
+                value: 127
+            })
+        ));
+    }
+
+    #[test]
+    fn decodes_bend_and_pressure() {
+        for (bytes, expected) in [
+            ([0xe1, 0, 0], -1.0),
+            ([0xe1, 0, 64], 0.0),
+            ([0xe1, 127, 127], 8191.0 / 8192.0),
+        ] {
+            let Some(MidiEvent::PitchBend { channel, value }) = parse(&bytes) else {
+                panic!("missing bend")
+            };
+            assert_eq!(channel, 1);
+            assert_eq!(value, expected);
+        }
+        for raw in [0, 64, 127] {
+            let Some(MidiEvent::ChannelPressure { channel, value }) = parse(&[0xd2, raw]) else {
+                panic!("missing pressure")
+            };
+            assert_eq!(channel, 2);
+            assert_eq!(value, f64::from(raw) / 127.0);
+        }
+    }
+
+    #[test]
+    fn ignores_other_and_malformed_messages() {
+        for bytes in [
+            &[0xc0, 10][..],
+            &[0xa0, 60, 10],
+            &[0xf8],
+            &[0xfe],
+            &[0xf0, 1, 2, 0xf7],
+            &[],
+            &[0x90],
+            &[0x90, 60],
+            &[0x90, 128, 10],
+            &[60, 100],
+        ] {
+            assert!(parse(bytes).is_none(), "{bytes:?}");
+        }
+    }
+}
