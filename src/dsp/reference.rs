@@ -4,7 +4,7 @@ use super::{
     lfo::{LfoDest, LfoWaveform},
     oscillator::Waveform,
     patch::{OscParams, Patch},
-    voice::Voice,
+    voice::{RenderParams, Voice},
 };
 
 fn render(case: usize, block_size: usize) -> [f64; 512] {
@@ -55,17 +55,23 @@ fn render(case: usize, block_size: usize) -> [f64; 512] {
         glide_type: GlideType::Lct,
         ..Patch::default()
     };
-    let mut voice = Voice::new(&patch, 48_000.0);
+    let mut voice = Voice::new(48_000.0);
     // Stop resets envelopes but preserves pitch history; avoid retrigger fixtures.
     voice.note_on(48, 100, &patch);
     voice.stop();
-    voice.set_pitch_bend(1.5);
-    voice.set_channel_pressure(0.3);
     voice.note_on(67, 110, &patch);
     let mut output = [0.0; 512];
     for block in output.chunks_mut(block_size) {
         let n = block.len();
-        voice.process(block, n);
+        voice.process(
+            block,
+            n,
+            RenderParams {
+                patch: &patch,
+                pitch_bend: 1.5,
+                pressure: 0.3,
+            },
+        );
     }
     output
 }

@@ -1,6 +1,6 @@
 use crate::dsp::{
     patch::Patch,
-    voice::{Voice, VoiceStatus},
+    voice::{RenderParams, Voice, VoiceStatus},
 };
 
 pub(crate) const MAX_VOICES: usize = 8;
@@ -14,8 +14,8 @@ pub struct VoiceAllocator {
 }
 
 impl VoiceAllocator {
-    pub fn new(patch: &Patch, sample_rate: f64) -> Self {
-        let voices = std::array::from_fn(|_| Voice::new(patch, sample_rate));
+    pub fn new(sample_rate: f64) -> Self {
+        let voices = std::array::from_fn(|_| Voice::new(sample_rate));
         Self {
             voices,
             timestamps: [0; MAX_VOICES],
@@ -60,32 +60,10 @@ impl VoiceAllocator {
         }
     }
 
-    pub(super) fn apply_patch(&mut self, patch: &Patch) {
-        for v in self.voices.iter_mut() {
-            v.apply_patch(patch);
-        }
-    }
-
-    pub fn pitch_bend(&mut self, semitones: f64) {
+    pub fn process(&mut self, out_buf: &mut [f64], n: usize, params: RenderParams<'_>) {
         for v in self.voices.iter_mut() {
             if v.status != VoiceStatus::Idle {
-                v.set_pitch_bend(semitones);
-            }
-        }
-    }
-
-    pub fn channel_pressure(&mut self, value: f64) {
-        for v in self.voices.iter_mut() {
-            if v.status != VoiceStatus::Idle {
-                v.set_channel_pressure(value);
-            }
-        }
-    }
-
-    pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
-        for v in self.voices.iter_mut() {
-            if v.status != VoiceStatus::Idle {
-                v.process(out_buf, n);
+                v.process(out_buf, n, params);
             }
         }
     }
@@ -140,7 +118,7 @@ mod tests {
     #[test]
     fn retrigger_reuses_slot() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         alloc.note_on(61, 100, &p);
         alloc.note_on(60, 80, &p);
@@ -152,7 +130,7 @@ mod tests {
     #[test]
     fn stealing_priority_is_exact() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..68 {
             alloc.note_on(note, 100, &p);
         }
@@ -178,7 +156,7 @@ mod tests {
     #[test]
     fn basic_note_on_off() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         let active = alloc
             .voices
@@ -198,7 +176,7 @@ mod tests {
     #[test]
     fn polyphony_up_to_max() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..60 + MAX_VOICES as u8 {
             alloc.note_on(note, 100, &p);
         }
@@ -213,7 +191,7 @@ mod tests {
     #[test]
     fn stealing_beyond_max_voices() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         // Fill all 8 voices.
         for note in 60..60 + MAX_VOICES as u8 {
             alloc.note_on(note, 100, &p);
@@ -234,12 +212,20 @@ mod tests {
     #[test]
     fn all_sound_off_stops_immediately() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         alloc.all_sound_off();
 
         let mut buf = [0.0_f64; 128];
-        alloc.process(&mut buf, 128);
+        alloc.process(
+            &mut buf,
+            128,
+            RenderParams {
+                patch: &p,
+                pitch_bend: 0.0,
+                pressure: 0.0,
+            },
+        );
 
         assert!(buf.iter().all(|sample| *sample == 0.0));
     }
@@ -247,7 +233,7 @@ mod tests {
     #[test]
     fn all_notes_off_silences_everything() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..68_u8 {
             alloc.note_on(note, 100, &p);
         }
@@ -263,10 +249,18 @@ mod tests {
     #[test]
     fn allocator_produces_audio() {
         let p = default_patch();
-        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 128];
-        alloc.process(&mut buf, 128);
+        alloc.process(
+            &mut buf,
+            128,
+            RenderParams {
+                patch: &p,
+                pitch_bend: 0.0,
+                pressure: 0.0,
+            },
+        );
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
         assert!(peak > 1e-6, "allocator produced silence");
     }

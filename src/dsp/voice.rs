@@ -28,6 +28,14 @@ pub enum VoiceStatus {
     Releasing, // can be stolen
 }
 
+/// Shared channel settings borrowed for one render call.
+#[derive(Clone, Copy)]
+pub struct RenderParams<'a> {
+    pub patch: &'a Patch,
+    pub pitch_bend: f64,
+    pub pressure: f64,
+}
+
 pub struct Voice {
     pub(crate) status: VoiceStatus,
     pub(crate) midi_note: u8,
@@ -44,18 +52,10 @@ pub struct Voice {
 
     /// Velocity scaling (0.0 / 1.0).
     velocity: f64,
-
-    /// Pitch-bend offset in semitones, applied on top of glide output.
-    pitch_bend_semitones: f64,
-
-    /// Channel aftertouch value (0.0..1.0), modulates filter cutoff.
-    channel_pressure: f64,
-
-    patch: Patch,
 }
 
 impl Voice {
-    pub fn new(patch: &Patch, sample_rate: f64) -> Self {
+    pub fn new(sample_rate: f64) -> Self {
         Self {
             status: VoiceStatus::Idle,
             midi_note: 0,
@@ -70,27 +70,10 @@ impl Voice {
 
             sample_rate,
             velocity: 1.0,
-            pitch_bend_semitones: 0.0,
-            channel_pressure: 0.0,
-            patch: *patch,
         }
     }
 
-    pub(crate) fn apply_patch(&mut self, patch: &Patch) {
-        self.patch = *patch;
-    }
-
-    pub fn set_pitch_bend(&mut self, semitones: f64) {
-        self.pitch_bend_semitones = semitones;
-    }
-
-    pub fn set_channel_pressure(&mut self, value: f64) {
-        self.channel_pressure = value;
-    }
-
     pub fn note_on(&mut self, note: u8, velocity: u8, patch: &Patch) {
-        self.patch = *patch;
-
         let target_hz = midi_to_hz(note);
         self.glide.set_target(
             target_hz,
@@ -137,7 +120,7 @@ impl Voice {
     }
 
     /// Render `n` samples into `out_buf` (accumulated, not overwritten).
-    pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
+    pub fn process(&mut self, out_buf: &mut [f64], n: usize, params: RenderParams<'_>) {
         // Re-borrow fields to avoid borrowing `self` twice inside the loop.
         // We work through scratch buffers on the stack for small block sizes.
         // 512 samples covers the largest practical block size.
@@ -146,7 +129,7 @@ impl Voice {
             "block size > 512 not supported without heap alloc"
         );
 
-        let p = self.patch;
+        let p = params.patch;
 
         let mut lfo_buf = [0.0_f64; 512];
         self.lfo.process(
@@ -178,7 +161,7 @@ impl Voice {
                 } else {
                     0.0
                 };
-                let total_st = lfo_st + self.pitch_bend_semitones;
+                let total_st = lfo_st + params.pitch_bend;
                 if total_st != 0.0 {
                     2.0_f64.powf(total_st / 12.0)
                 } else {
@@ -225,7 +208,7 @@ impl Voice {
                 0.0
             };
             // Channel aftertouch opens the filter by up to +3 octaves.
-            let pressure_mod = self.channel_pressure * 3.0;
+            let pressure_mod = params.pressure * 3.0;
             cutoff_buf[i] = (key_tracked_cutoff * 2.0_f64.powf(env_mod + lfo_mod + pressure_mod))
                 .clamp(20.0, nyquist);
         }
@@ -262,6 +245,14 @@ mod tests {
         oscillator::Waveform,
         patch::OscParams,
     };
+
+    fn render_params(patch: &Patch) -> RenderParams<'_> {
+        RenderParams {
+            patch,
+            pitch_bend: 0.0,
+            pressure: 0.0,
+        }
+    }
 
     fn bass_patch() -> Patch {
         Patch {
@@ -318,10 +309,10 @@ mod tests {
     fn voice_produces_audio() {
         let sr = 48_000.0;
         let p = bass_patch();
-        let mut v = Voice::new(&p, sr);
+        let mut v = Voice::new(sr);
         v.note_on(60, 100, &p);
         let mut buf = vec![0.0_f64; 128];
-        v.process(&mut buf, 128);
+        v.process(&mut buf, 128, render_params(&p));
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
         assert!(peak > 1e-6, "voice produced silence");
     }
@@ -330,17 +321,17 @@ mod tests {
     fn voice_releases() {
         let sr = 48_000.0;
         let p = bass_patch();
-        let mut v = Voice::new(&p, sr);
+        let mut v = Voice::new(sr);
         v.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 512];
         for _ in 0..200 {
             buf.fill(0.0);
-            v.process(&mut buf, 128);
+            v.process(&mut buf, 128, render_params(&p));
         }
         v.note_off();
         for _ in 0..200 {
             buf.fill(0.0);
-            v.process(&mut buf, 128);
+            v.process(&mut buf, 128, render_params(&p));
         }
         assert!(v.is_finished() || v.status == VoiceStatus::Idle);
     }
@@ -363,12 +354,12 @@ mod tests {
                 filter_key_track: key_track,
                 ..patch
             };
-            let mut voice = Voice::new(&patch, sr);
+            let mut voice = Voice::new(sr);
             let mut buf = [0.0_f64; 256];
             voice.note_on(84, 127, &patch);
             for _ in 0..20 {
                 buf.fill(0.0);
-                voice.process(&mut buf, 256);
+                voice.process(&mut buf, 256, render_params(&patch));
             }
 
             (buf.iter().map(|sample| sample * sample).sum::<f64>() / buf.len() as f64).sqrt()
@@ -388,8 +379,8 @@ mod tests {
         let saw = bass_patch();
         let mut square = saw;
         square.oscillators[0].waveform = Waveform::Square;
-        let mut unchanged = Voice::new(&saw, sr);
-        let mut changed = Voice::new(&saw, sr);
+        let mut unchanged = Voice::new(sr);
+        let mut changed = Voice::new(sr);
         unchanged.note_on(60, 100, &saw);
         changed.note_on(60, 100, &saw);
 
@@ -398,15 +389,14 @@ mod tests {
         for _ in 0..10 {
             unchanged_buf.fill(0.0);
             changed_buf.fill(0.0);
-            unchanged.process(&mut unchanged_buf, 128);
-            changed.process(&mut changed_buf, 128);
+            unchanged.process(&mut unchanged_buf, 128, render_params(&saw));
+            changed.process(&mut changed_buf, 128, render_params(&saw));
         }
 
-        changed.apply_patch(&square);
         unchanged_buf.fill(0.0);
         changed_buf.fill(0.0);
-        unchanged.process(&mut unchanged_buf, 128);
-        changed.process(&mut changed_buf, 128);
+        unchanged.process(&mut unchanged_buf, 128, render_params(&saw));
+        changed.process(&mut changed_buf, 128, render_params(&square));
         let difference = unchanged_buf
             .iter()
             .zip(changed_buf)
@@ -427,7 +417,7 @@ mod tests {
             glide_type: crate::dsp::glide::GlideType::Lct,
             ..bass_patch()
         };
-        let mut voice = Voice::new(&patch, 48_000.0);
+        let mut voice = Voice::new(48_000.0);
         voice.note_on(60, 100, &patch);
         assert!((voice.glide.tick() - midi_to_hz(60)).abs() < 0.1);
 
@@ -451,10 +441,10 @@ mod tests {
         };
 
         let render = |patch: Patch| {
-            let mut voice = Voice::new(&patch, 48_000.0);
+            let mut voice = Voice::new(48_000.0);
             let mut output = [0.0; 256];
             voice.note_on(60, 127, &patch);
-            voice.process(&mut output, 256);
+            voice.process(&mut output, 256, render_params(&patch));
             output
         };
         let difference = render(single)
