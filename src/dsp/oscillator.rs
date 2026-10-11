@@ -48,6 +48,7 @@ impl Oscillator {
     /// Frequencies at or above Nyquist are muted to prevent aliasing.
     /// `buf` is accumulated into (not overwritten) so multiple oscillators can
     /// be summed in the voice without an extra allocation.
+    #[cfg(test)]
     pub fn process(
         &mut self,
         buf: &mut [f64],
@@ -56,50 +57,51 @@ impl Oscillator {
         waveform: Waveform,
         sample_rate: f64,
     ) {
+        for s in buf[..n].iter_mut() {
+            *s += self.tick(freq, waveform, sample_rate);
+        }
+    }
+
+    /// Sample once; muted pitches advance phase at the capped frequency.
+    #[inline]
+    pub fn tick(&mut self, freq: f64, waveform: Waveform, sample_rate: f64) -> f64 {
         if !freq.is_finite() || !sample_rate.is_finite() || sample_rate <= 0.0 {
-            return;
+            return 0.0;
         }
 
         let nyquist = sample_rate * 0.5;
         let muted = freq >= nyquist || freq < 0.0;
         let dt = freq.clamp(0.0, nyquist) / sample_rate;
-
         if muted {
-            self.phase = (self.phase + dt * n as f64).rem_euclid(1.0);
-            return;
-        }
-
-        for s in buf[..n].iter_mut() {
-            let sample = match waveform {
-                Waveform::Sine => {
-                    use std::f64::consts::TAU;
-                    (self.phase * TAU).sin()
-                }
-
-                Waveform::Saw => {
-                    let naive = 2.0 * self.phase - 1.0;
-                    naive - poly_blep(self.phase, dt)
-                }
-
-                Waveform::Square | Waveform::Triangle => {
-                    let naive: f64 = if self.phase < 0.5 { 1.0 } else { -1.0 };
-                    let half = (self.phase + 0.5).fract();
-                    let square = naive + poly_blep(self.phase, dt) - poly_blep(half, dt);
-                    // Integrate a square wave and rescale
-                    if waveform == Waveform::Triangle {
-                        // Leaky integrator tuned to give unit amplitude at low freq
-                        self.tri_integrator =
-                            self.tri_integrator * (1.0 - dt * 0.01) + 4.0 * dt * square;
-                        self.tri_integrator
-                    } else {
-                        square
-                    }
-                }
-            };
-
-            *s += sample;
             self.phase = (self.phase + dt).rem_euclid(1.0);
+            return 0.0;
         }
+
+        let sample = match waveform {
+            Waveform::Sine => {
+                use std::f64::consts::TAU;
+                (self.phase * TAU).sin()
+            }
+            Waveform::Saw => {
+                let naive = 2.0 * self.phase - 1.0;
+                naive - poly_blep(self.phase, dt)
+            }
+            Waveform::Square | Waveform::Triangle => {
+                let naive: f64 = if self.phase < 0.5 { 1.0 } else { -1.0 };
+                let half = (self.phase + 0.5).fract();
+                let square = naive + poly_blep(self.phase, dt) - poly_blep(half, dt);
+                // Integrate a square wave and rescale with the existing leak.
+                if waveform == Waveform::Triangle {
+                    self.tri_integrator =
+                        self.tri_integrator * (1.0 - dt * 0.01) + 4.0 * dt * square;
+                    self.tri_integrator
+                } else {
+                    square
+                }
+            }
+        };
+        self.phase = (self.phase + dt).rem_euclid(1.0);
+        sample
     }
 }
 
@@ -136,6 +138,59 @@ mod tests {
         let mut buf = vec![0.0_f64; N];
         osc.process(&mut buf, N, 440.0, waveform, SR);
         buf
+    }
+
+    #[test]
+    fn scalar_matches_wrapper() {
+        for waveform in [
+            Waveform::Sine,
+            Waveform::Saw,
+            Waveform::Square,
+            Waveform::Triangle,
+        ] {
+            for freq in [
+                0.0,
+                -1.0,
+                f64::NAN,
+                f64::INFINITY,
+                440.0,
+                SR * 0.499,
+                SR * 0.5,
+                SR * 2.0,
+            ] {
+                let mut scalar = Oscillator::new();
+                let mut block = Oscillator::new();
+                let mut samples = [0.25; 257];
+                block.process(&mut samples, 257, freq, waveform, SR);
+                for sample in samples {
+                    assert_eq!(sample, 0.25 + scalar.tick(freq, waveform, SR));
+                }
+                assert_eq!(scalar.phase, block.phase);
+                assert_eq!(scalar.tri_integrator, block.tri_integrator);
+            }
+        }
+    }
+
+    #[test]
+    fn silent_phase_policy() {
+        let mut osc = Oscillator::new();
+        osc.tick(440.0, Waveform::Sine, SR);
+        let phase = osc.phase;
+        for freq in [-1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(osc.tick(freq, Waveform::Triangle, SR), 0.0);
+            assert_eq!(osc.phase, phase);
+            assert_eq!(osc.tri_integrator, 0.0);
+        }
+        assert_eq!(osc.tick(0.0, Waveform::Saw, SR), 2.0 * phase - 1.0);
+        assert_eq!(osc.phase, phase);
+        assert_eq!(osc.tick(SR, Waveform::Triangle, SR), 0.0);
+        assert_eq!(osc.phase, (phase + 0.5).rem_euclid(1.0));
+        assert_eq!(osc.tri_integrator, 0.0);
+        for rate in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let phase = osc.phase;
+            assert_eq!(osc.tick(440.0, Waveform::Saw, rate), 0.0);
+            assert_eq!(osc.phase, phase);
+        }
     }
 
     #[test]
