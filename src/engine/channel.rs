@@ -1,5 +1,8 @@
 use crate::dsp::{patch::Patch, voice::RenderParams};
-use crate::{engine::allocator::VoiceAllocator, parameter::Control};
+use crate::{
+    engine::{allocator::VoiceAllocator, message::EngineEvent},
+    parameter::Control,
+};
 
 pub struct Channel {
     patch: Patch,
@@ -22,6 +25,17 @@ impl Channel {
             sustain: false,
             presses: [0; 128],
             deferred: [false; 128],
+        }
+    }
+
+    pub fn handle(&mut self, event: EngineEvent) {
+        match event {
+            EngineEvent::NoteOn { note, velocity } => self.note_on(note, velocity),
+            EngineEvent::NoteOff { note } => self.note_off(note),
+            EngineEvent::AllNotesOff => self.all_notes_off(),
+            EngineEvent::AllSoundOff => self.all_sound_off(),
+            EngineEvent::Sustain { down } => self.set_sustain(down),
+            EngineEvent::ResetControllers => self.reset_controllers(),
         }
     }
 
@@ -114,6 +128,36 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dispatches_all_events() {
+        let mut ch = Channel::new(Patch::default(), 48_000.0);
+        ch.handle(EngineEvent::NoteOn {
+            note: 60,
+            velocity: 100,
+        });
+        assert_eq!(ch.presses[60], 1);
+        ch.handle(EngineEvent::Sustain { down: true });
+        ch.handle(EngineEvent::NoteOff { note: 60 });
+        assert!(ch.deferred[60]);
+        ch.pitch_bend(2.0);
+        ch.channel_pressure(1.0);
+        ch.handle(EngineEvent::ResetControllers);
+        assert!(!ch.sustain);
+        assert!(!ch.deferred[60]);
+        assert_eq!(ch.pitch_bend, 0.0);
+        assert_eq!(ch.pressure, 0.0);
+        ch.handle(EngineEvent::NoteOn {
+            note: 62,
+            velocity: 100,
+        });
+        ch.handle(EngineEvent::AllNotesOff);
+        assert!(ch.presses.iter().all(|n| *n == 0));
+        ch.handle(EngineEvent::AllSoundOff);
+        let mut output = [0.0; 256];
+        ch.process(&mut output);
+        assert!(output.iter().all(|s| *s == 0.0));
+    }
 
     #[test]
     fn controls_reach_current_notes() {

@@ -10,7 +10,7 @@ use uuun::{
         allocator::MAX_VOICES,
         audio::AudioCallback,
         control::Controls,
-        message::EngineMessage,
+        message::{EngineEvent, EngineMessage},
         synth::{BLOCK_SIZE, Synth},
     },
 };
@@ -42,10 +42,12 @@ impl Callback {
         let mut synth = Synth::new(patch, sample_rate);
 
         for voice in 0..voices {
-            synth.handle(EngineMessage::NoteOn {
+            synth.handle(EngineMessage {
                 channel: voice / MAX_VOICES,
-                note: 48 + (voice % MAX_VOICES) as u8,
-                velocity: 127,
+                event: EngineEvent::NoteOn {
+                    note: 48 + (voice % MAX_VOICES) as u8,
+                    velocity: 127,
+                },
             });
         }
 

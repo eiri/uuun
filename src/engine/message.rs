@@ -1,25 +1,15 @@
-#[derive(Debug, Clone, Copy)]
-pub enum EngineMessage {
-    NoteOn {
-        channel: usize,
-        note: u8,
-        velocity: u8,
-    },
-    NoteOff {
-        channel: usize,
-        note: u8,
-    },
-    AllNotesOff {
-        channel: usize,
-    },
-    AllSoundOff {
-        channel: usize,
-    },
-    Sustain {
-        channel: usize,
-        down: bool,
-    },
-    ResetControllers {
-        channel: usize,
-    },
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineMessage {
+    pub channel: usize,
+    pub event: EngineEvent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineEvent {
+    NoteOn { note: u8, velocity: u8 },
+    NoteOff { note: u8 },
+    AllNotesOff,
+    AllSoundOff,
+    Sustain { down: bool },
+    ResetControllers,
 }

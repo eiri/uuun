@@ -5,7 +5,11 @@ use std::sync::{
 };
 
 use crate::{
-    engine::{NUM_CHANNELS, control::Controls, message::EngineMessage},
+    engine::{
+        NUM_CHANNELS,
+        control::Controls,
+        message::{EngineEvent, EngineMessage},
+    },
     midi::{
         cc_map::{
             ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, RESET_CONTROLLERS_CC, SUSTAIN_CC, cc_target,
@@ -52,84 +56,51 @@ impl MidiRouter {
     }
 
     pub fn route(&self, event: MidiEvent) {
-        match event {
-            MidiEvent::NoteOn {
-                channel,
-                note,
-                velocity,
-            } => {
-                let ch = channel as usize;
-                if ch >= NUM_CHANNELS {
-                    return;
-                }
+        let channel = usize::from(event.channel());
+        if channel >= NUM_CHANNELS {
+            return;
+        }
 
-                self.send_note_on(EngineMessage::NoteOn {
-                    channel: ch,
-                    note,
-                    velocity,
+        match event {
+            MidiEvent::NoteOn { note, velocity, .. } => {
+                self.send_note_on(EngineMessage {
+                    channel,
+                    event: EngineEvent::NoteOn { note, velocity },
                 });
             }
-
-            MidiEvent::NoteOff { channel, note } => {
-                let ch = channel as usize;
-                if ch >= NUM_CHANNELS {
-                    return;
-                }
-                self.send_critical(EngineMessage::NoteOff { channel: ch, note });
+            MidiEvent::NoteOff { note, .. } => {
+                self.send_critical(EngineMessage {
+                    channel,
+                    event: EngineEvent::NoteOff { note },
+                });
             }
-
-            MidiEvent::ControlChange { channel, cc, value } => {
-                let ch = channel as usize;
-                if ch >= NUM_CHANNELS {
-                    return;
-                }
-                match cc {
-                    SUSTAIN_CC => {
-                        self.send_critical(EngineMessage::Sustain {
-                            channel: ch,
-                            down: value >= 64,
-                        });
-                        return;
-                    }
-                    ALL_SOUND_OFF_CC => {
-                        self.send_critical(EngineMessage::AllSoundOff { channel: ch });
-                        return;
-                    }
+            MidiEvent::ControlChange { cc, value, .. } => {
+                let event = match cc {
+                    SUSTAIN_CC => Some(EngineEvent::Sustain { down: value >= 64 }),
+                    ALL_SOUND_OFF_CC => Some(EngineEvent::AllSoundOff),
                     RESET_CONTROLLERS_CC => {
+                        // Clear pending runtime controls before submitting reset.
                         self.controls
-                            .clear(ch, &[Control::PitchBend, Control::ChannelPressure]);
-                        self.send_critical(EngineMessage::ResetControllers { channel: ch });
-                        return;
+                            .clear(channel, &[Control::PitchBend, Control::ChannelPressure]);
+                        Some(EngineEvent::ResetControllers)
                     }
-                    ALL_NOTES_OFF_CC => {
-                        self.send_critical(EngineMessage::AllNotesOff { channel: ch });
-                        return;
-                    }
-                    _ => {}
-                }
-
-                if let Some(control) = cc_target(cc)
+                    ALL_NOTES_OFF_CC => Some(EngineEvent::AllNotesOff),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    self.send_critical(EngineMessage { channel, event });
+                } else if let Some(control) = cc_target(cc)
                     && let Some(value) = cc_value(control, value as f64 / 127.0)
                 {
-                    self.controls.set(ch, control, value);
+                    self.controls.set(channel, control, value);
                 }
             }
-
-            MidiEvent::PitchBend { channel, value } => {
-                let ch = channel as usize;
-                if ch >= NUM_CHANNELS {
-                    return;
-                }
-                let semitones = value * PITCH_BEND_SEMITONES;
-                self.controls.set(ch, Control::PitchBend, semitones);
+            MidiEvent::PitchBend { value, .. } => {
+                self.controls
+                    .set(channel, Control::PitchBend, value * PITCH_BEND_SEMITONES);
             }
-
-            MidiEvent::ChannelPressure { channel, value } => {
-                let ch = channel as usize;
-                if ch >= NUM_CHANNELS {
-                    return;
-                }
-                self.controls.set(ch, Control::ChannelPressure, value);
+            MidiEvent::ChannelPressure { value, .. } => {
+                self.controls.set(channel, Control::ChannelPressure, value);
             }
         }
     }
@@ -180,7 +151,10 @@ mod tests {
         });
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::ResetControllers { channel: 0 }
+            EngineMessage {
+                channel: 0,
+                event: EngineEvent::ResetControllers
+            }
         ));
         let mut applied = Vec::new();
         controls.drain(|ch, control, value| applied.push((ch, control, value)));
@@ -261,14 +235,23 @@ mod tests {
             });
         });
 
-        assert!(matches!(rx.recv().unwrap(), EngineMessage::NoteOn { .. }));
-        assert!(matches!(
+        assert_eq!(
             rx.recv().unwrap(),
-            EngineMessage::NoteOff {
+            EngineMessage {
                 channel: 0,
-                note: 60
+                event: EngineEvent::NoteOn {
+                    note: 60,
+                    velocity: 100
+                }
             }
-        ));
+        );
+        assert_eq!(
+            rx.recv().unwrap(),
+            EngineMessage {
+                channel: 0,
+                event: EngineEvent::NoteOff { note: 60 }
+            }
+        );
         handle.join().unwrap();
     }
 
@@ -308,7 +291,13 @@ mod tests {
             });
         }
 
-        assert!(matches!(rx.recv().unwrap(), EngineMessage::NoteOn { .. }));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage {
+                event: EngineEvent::NoteOn { .. },
+                ..
+            }
+        ));
         let mut applied = Vec::new();
         controls.drain(|channel, control, value| applied.push((channel, control, value)));
         assert_eq!(applied, [(0, Control::FilterCutoff, 20_000.0)]);
@@ -382,11 +371,17 @@ mod tests {
 
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::AllSoundOff { channel: 1 }
+            EngineMessage {
+                channel: 1,
+                event: EngineEvent::AllSoundOff
+            }
         ));
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::AllNotesOff { channel: 1 }
+            EngineMessage {
+                channel: 1,
+                event: EngineEvent::AllNotesOff
+            }
         ));
     }
 
@@ -415,21 +410,24 @@ mod tests {
 
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::Sustain {
+            EngineMessage {
                 channel: 2,
-                down: true
+                event: EngineEvent::Sustain { down: true }
             }
         ));
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::Sustain {
+            EngineMessage {
                 channel: 2,
-                down: false
+                event: EngineEvent::Sustain { down: false }
             }
         ));
         assert!(matches!(
             rx.recv().unwrap(),
-            EngineMessage::ResetControllers { channel: 2 }
+            EngineMessage {
+                channel: 2,
+                event: EngineEvent::ResetControllers
+            }
         ));
 
         let mut applied = 0;
