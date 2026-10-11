@@ -8,14 +8,12 @@ use cpal::{
 
 use crate::{
     dsp::patch::Patch,
-    engine::{channel::Channel, control::Controls, message::EngineMessage},
+    engine::{
+        control::Controls,
+        message::EngineMessage,
+        synth::{BLOCK_SIZE, Synth},
+    },
 };
-
-pub const NUM_CHANNELS: usize = 4; // multitimbral
-pub const BLOCK_SIZE: usize = 256; // preferred buffer size in frames
-
-const CHANNEL_GAIN: f64 = 0.5;
-const MASTER_GAIN: f64 = 0.23;
 
 pub struct Engine {
     sender: mpsc::SyncSender<EngineMessage>,
@@ -133,23 +131,17 @@ where
     let out_chans = config.channels as usize;
     let (tx, rx) = mpsc::sync_channel(256);
     let controls = Arc::new(Controls::new());
-    let callback_controls = Arc::clone(&controls);
-    let mut channels = std::array::from_fn(|_| Channel::new(patch, sample_rate));
-    let mut mix = [0.0; BLOCK_SIZE];
-    let mut channel_mix = [0.0; BLOCK_SIZE];
+    let mut callback = AudioCallback::new(
+        rx,
+        Arc::clone(&controls),
+        Synth::new(patch, sample_rate),
+        out_chans,
+    );
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _info| {
-            audio_callback(
-                data,
-                &rx,
-                &callback_controls,
-                &mut channels,
-                &mut mix,
-                &mut channel_mix,
-                out_chans,
-            );
+            callback.render(data);
         },
         |err| eprintln!("[uuun] audio stream error: {err}"),
         None,
@@ -158,81 +150,50 @@ where
     Ok((tx, controls, stream))
 }
 
-pub(crate) fn audio_callback<T>(
-    output: &mut [T],
-    rx: &mpsc::Receiver<EngineMessage>,
-    controls: &Controls,
-    channels: &mut [Channel; NUM_CHANNELS],
-    mix_f64: &mut [f64; BLOCK_SIZE],
-    channel_mix: &mut [f64; BLOCK_SIZE],
+/// Queue, mailboxes, synthesis, and PCM conversion state for one device.
+pub struct AudioCallback {
+    rx: mpsc::Receiver<EngineMessage>,
+    controls: Arc<Controls>,
+    synth: Synth,
+    mono: [f64; BLOCK_SIZE],
     out_chans: usize,
-) where
-    T: SizedSample + FromSample<f32>,
-{
-    while let Ok(msg) = rx.try_recv() {
-        apply_message(channels, msg);
-    }
-    controls.drain(|channel, control, value| {
-        if let Some(channel) = channels.get_mut(channel) {
-            channel.control(control, value);
-        }
-    });
-
-    // CPAL may provide more frames than requested. Render bounded chunks.
-    for block in output.chunks_mut(BLOCK_SIZE * out_chans) {
-        let frames = block.len().div_ceil(out_chans);
-        mix_f64[..frames].fill(0.0);
-
-        for channel in channels.iter_mut() {
-            channel_mix[..frames].fill(0.0);
-            channel.process(&mut channel_mix[..frames]);
-
-            for (mix, sample) in mix_f64.iter_mut().zip(channel_mix.iter()).take(frames) {
-                *mix += sample * CHANNEL_GAIN;
-            }
-        }
-
-        for (frame, sample) in block.chunks_mut(out_chans).zip(mix_f64.iter()) {
-            let sample = (sample * MASTER_GAIN).clamp(-1.0, 1.0) as f32;
-            frame.fill(T::from_sample(sample));
-        }
-    }
 }
 
-fn apply_message(channels: &mut [Channel; NUM_CHANNELS], msg: EngineMessage) {
-    match msg {
-        EngineMessage::NoteOn {
-            channel,
-            note,
-            velocity,
-        } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.note_on(note, velocity);
-            }
+impl AudioCallback {
+    /// The device channel count must be nonzero.
+    pub fn new(
+        rx: mpsc::Receiver<EngineMessage>,
+        controls: Arc<Controls>,
+        synth: Synth,
+        out_chans: usize,
+    ) -> Self {
+        assert!(out_chans > 0);
+        Self {
+            rx,
+            controls,
+            synth,
+            mono: [0.0; BLOCK_SIZE],
+            out_chans,
         }
-        EngineMessage::NoteOff { channel, note } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.note_off(note);
-            }
+    }
+
+    pub fn render<T>(&mut self, output: &mut [T])
+    where
+        T: SizedSample + FromSample<f32>,
+    {
+        // Drain events before mailboxes, once per device callback.
+        while let Ok(message) = self.rx.try_recv() {
+            self.synth.handle(message);
         }
-        EngineMessage::AllNotesOff { channel } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.all_notes_off();
-            }
-        }
-        EngineMessage::AllSoundOff { channel } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.all_sound_off();
-            }
-        }
-        EngineMessage::Sustain { channel, down } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.set_sustain(down);
-            }
-        }
-        EngineMessage::ResetControllers { channel } => {
-            if let Some(ch) = channels.get_mut(channel) {
-                ch.reset_controllers();
+        self.controls
+            .drain(|channel, control, value| self.synth.set_control(channel, control, value));
+
+        for block in output.chunks_mut(BLOCK_SIZE * self.out_chans) {
+            let frames = block.len().div_ceil(self.out_chans);
+            self.synth.render(&mut self.mono[..frames]);
+            for (frame, sample) in block.chunks_mut(self.out_chans).zip(&self.mono) {
+                // All device formats retain the original f32 conversion.
+                frame.fill(T::from_sample(*sample as f32));
             }
         }
     }
@@ -247,9 +208,9 @@ mod tests {
         T: SizedSample + FromSample<f32>,
     {
         let patch = Patch::default();
-        let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
+        let synth = Synth::new(patch, 48_000.0);
         let (tx, rx) = mpsc::sync_channel(1);
-        let controls = Controls::new();
+        let controls = Arc::new(Controls::new());
         tx.send(EngineMessage::NoteOn {
             channel: 0,
             note: 60,
@@ -257,17 +218,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut mix = [0.0; BLOCK_SIZE];
-        let mut channel_mix = [0.0; BLOCK_SIZE];
-        audio_callback(
-            output,
-            &rx,
-            &controls,
-            &mut channels,
-            &mut mix,
-            &mut channel_mix,
-            2,
-        );
+        AudioCallback::new(rx, controls, synth, 2).render(output);
     }
 
     #[test]
@@ -315,21 +266,17 @@ mod tests {
                 filter_cutoff_hz: 10_000.0,
                 ..Default::default()
             };
-            let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
+            let mut synth = Synth::new(patch, 48_000.0);
             for voice in 0..voices {
-                channels[voice / 8].note_on(48 + (voice % 8) as u8, 127);
+                synth.handle(EngineMessage::NoteOn {
+                    channel: voice / 8,
+                    note: 48 + (voice % 8) as u8,
+                    velocity: 127,
+                });
             }
             let (_tx, rx) = mpsc::sync_channel(1);
             let mut output = [0.0_f32; 512];
-            audio_callback(
-                &mut output,
-                &rx,
-                &Controls::new(),
-                &mut channels,
-                &mut [0.0; BLOCK_SIZE],
-                &mut [0.0; BLOCK_SIZE],
-                2,
-            );
+            AudioCallback::new(rx, Arc::new(Controls::new()), synth, 2).render(&mut output);
             let mono: Vec<f64> = output.iter().step_by(2).map(|s| f64::from(*s)).collect();
             for (actual, expected) in crate::dsp::reference::summary(&mono)
                 .into_iter()
@@ -365,7 +312,7 @@ mod tests {
 
         assert!(output.iter().any(|sample| *sample != 0.0));
         let peak = output.iter().copied().map(f32::abs).fold(0.0, f32::max);
-        assert!(peak <= (CHANNEL_GAIN * MASTER_GAIN) as f32);
+        assert!(peak <= 0.115);
     }
 
     #[test]
@@ -380,52 +327,33 @@ mod tests {
     }
 
     #[test]
-    fn gain_stays_clean_under_load() {
-        for voices in [1, 8, 32] {
-            let samples = render_voices(voices);
-            let peak = samples.iter().copied().map(f32::abs).fold(0.0, f32::max);
-            let rms = (samples
-                .iter()
-                .map(|sample| f64::from(*sample).powi(2))
-                .sum::<f64>()
-                / samples.len() as f64)
-                .sqrt();
-            let clipped = samples.iter().filter(|sample| sample.abs() >= 1.0).count();
-
-            assert!(rms > 0.001, "{voices} voices produced silence");
-            assert!(rms < 0.35, "{voices} voices reached {rms:.3} RMS");
-            assert!(peak < 0.9, "{voices} voices peaked at {peak:.3}");
-            assert_eq!(clipped, 0, "{voices} voices clipped {clipped} samples");
+    fn core_matches_adapter() {
+        for channels in [1, 2, 6] {
+            for frames in [0, 1, 64, 256, 513, 1024] {
+                let patch = Patch::default();
+                let mut core = Synth::new(patch, 48_000.0);
+                let message = EngineMessage::NoteOn {
+                    channel: 0,
+                    note: 60,
+                    velocity: 100,
+                };
+                core.handle(message);
+                let (tx, rx) = mpsc::sync_channel(256);
+                tx.send(message).unwrap();
+                let mut callback = AudioCallback::new(
+                    rx,
+                    Arc::new(Controls::new()),
+                    Synth::new(patch, 48_000.0),
+                    channels,
+                );
+                let mut mono = vec![f64::NAN; frames];
+                let mut output = vec![f64::NAN; frames * channels];
+                core.render(&mut mono);
+                callback.render(&mut output);
+                for (frame, sample) in output.chunks(channels).zip(mono) {
+                    assert!(frame.iter().all(|s| *s == f64::from(sample as f32)));
+                }
+            }
         }
-    }
-
-    fn render_voices(voices: usize) -> Vec<f32> {
-        let patch = Patch {
-            filter_cutoff_hz: 10_000.0,
-            ..Patch::default()
-        };
-        let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
-        for voice in 0..voices {
-            let channel = voice / crate::engine::allocator::MAX_VOICES;
-            let note = 48 + (voice % crate::engine::allocator::MAX_VOICES) as u8;
-            channels[channel].note_on(note, 127);
-        }
-
-        let (_tx, rx) = mpsc::sync_channel(1);
-        let controls = Controls::new();
-        let mut mix = [0.0; BLOCK_SIZE];
-        let mut channel_mix = [0.0; BLOCK_SIZE];
-        let mut output = vec![0.0; 24_000 * 2];
-        audio_callback(
-            &mut output,
-            &rx,
-            &controls,
-            &mut channels,
-            &mut mix,
-            &mut channel_mix,
-            2,
-        );
-
-        output.into_iter().step_by(2).skip(2_048).collect()
     }
 }

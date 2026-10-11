@@ -5,7 +5,7 @@ use std::sync::{
 };
 
 use crate::{
-    engine::{audio::NUM_CHANNELS, control::Controls, message::EngineMessage},
+    engine::{NUM_CHANNELS, control::Controls, message::EngineMessage},
     midi::{
         cc_map::{
             ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, RESET_CONTROLLERS_CC, SUSTAIN_CC, cc_target,

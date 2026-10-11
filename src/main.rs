@@ -1,7 +1,4 @@
-mod dsp;
-mod engine;
-mod midi;
-mod parameter;
+use uuun::{dsp, engine, midi};
 
 use std::{env, thread, time::Duration};
 

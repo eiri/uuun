@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::{engine::audio::NUM_CHANNELS, parameter::Control};
+use crate::{engine::NUM_CHANNELS, parameter::Control};
 
 const CONTROL_COUNT: usize = Control::ALL.len();
 

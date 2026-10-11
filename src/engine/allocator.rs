@@ -3,7 +3,7 @@ use crate::dsp::{
     voice::{RenderParams, Voice, VoiceStatus},
 };
 
-pub(crate) const MAX_VOICES: usize = 8;
+pub const MAX_VOICES: usize = 8;
 
 pub struct VoiceAllocator {
     voices: [Voice; MAX_VOICES],
