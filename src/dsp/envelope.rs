@@ -36,6 +36,8 @@ pub struct Envelope {
     stage: Stage,
     /// Current envelope output value (0.0 / 1.0).
     value: f64,
+    /// Value at which the attack stage started.
+    attack_start: f64,
     /// Value at which the release stage started.
     release_start: f64,
     /// Elapsed samples in the current stage.
@@ -48,6 +50,7 @@ impl Envelope {
         Self {
             stage: Stage::Idle,
             value: 0.0,
+            attack_start: 0.0,
             release_start: 0.0,
             stage_samples: 0,
             sample_rate,
@@ -57,15 +60,16 @@ impl Envelope {
     pub fn reset(&mut self) {
         self.stage = Stage::Idle;
         self.value = 0.0;
+        self.attack_start = 0.0;
         self.release_start = 0.0;
         self.stage_samples = 0;
     }
 
-    /// Trigger a note without discontinuity when already releasing.
+    /// Attack from the current level when retriggering.
     pub fn note_on(&mut self) {
+        self.attack_start = self.value;
         self.stage = Stage::Attack;
         self.stage_samples = 0;
-        // Keep current value so we don't click when retriggering mid-release.
     }
 
     /// Begin the release stage.
@@ -93,8 +97,9 @@ impl Envelope {
             Stage::Attack => {
                 self.stage_samples += 1;
                 let dur = (params.attack * sr).max(1.0);
-                self.value = self.stage_samples as f64 / dur;
-                if self.value >= 1.0 {
+                let t = (self.stage_samples as f64 / dur).clamp(0.0, 1.0);
+                self.value = self.attack_start + (1.0 - self.attack_start) * t;
+                if self.stage_samples as f64 >= dur {
                     self.value = 1.0;
                     self.stage = Stage::Decay;
                     self.stage_samples = 0;
@@ -161,6 +166,61 @@ mod tests {
             sustain: 0.7,
             release: 0.2,
         }
+    }
+
+    #[test]
+    fn retrigger_interpolates_on_time() {
+        let p = AdsrParams {
+            attack: 0.01,
+            decay: 0.01,
+            sustain: 0.8,
+            release: 0.1,
+        };
+        for (ticks, release_ticks) in [(21, Some(5)), (4, None), (10, None), (21, None)] {
+            let mut env = Envelope::new(1_000.0);
+            env.note_on();
+            for _ in 0..ticks {
+                env.tick(&p);
+            }
+            if let Some(ticks) = release_ticks {
+                env.note_off();
+                for _ in 0..ticks {
+                    env.tick(&p);
+                }
+            }
+            let start = env.value;
+            env.note_on();
+            for tick in 1..=10 {
+                let expected = start + (1.0 - start) * f64::from(tick) / 10.0;
+                assert!(
+                    (env.tick(&p) - expected).abs() < 1e-12,
+                    "start {start}, tick {tick}"
+                );
+                assert_eq!(
+                    env.stage,
+                    if tick == 10 {
+                        Stage::Decay
+                    } else {
+                        Stage::Attack
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_attack_and_reset() {
+        let mut env = Envelope::new(1_000.0);
+        let p = AdsrParams {
+            attack: 0.0,
+            ..Default::default()
+        };
+        env.note_on();
+        assert_eq!(env.tick(&p), 1.0);
+        assert_eq!(env.stage, Stage::Decay);
+        env.reset();
+        env.note_on();
+        assert_eq!(env.tick(&AdsrParams { attack: 0.01, ..p }), 0.1);
     }
 
     #[test]
