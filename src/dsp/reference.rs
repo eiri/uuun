@@ -3,7 +3,7 @@ use super::{
     glide::GlideType,
     lfo::{LfoDest, LfoWaveform},
     oscillator::Waveform,
-    patch::Patch,
+    patch::{OscParams, Patch},
     voice::Voice,
 };
 
@@ -15,13 +15,25 @@ fn render(case: usize, block_size: usize) -> [f64; 512] {
         Waveform::Sine,
     ];
     let patch = Patch {
-        osc1_waveform: waveforms[case],
-        osc2_waveform: waveforms[(case + 1) % 4],
-        osc2_detune_ct: 7.0,
-        osc2_level: 0.7,
-        osc3_waveform: waveforms[(case + 2) % 4],
-        osc3_octave: -1,
-        osc3_level: 0.5,
+        oscillators: [
+            OscParams {
+                waveform: waveforms[case],
+                level: 1.0,
+                ..Default::default()
+            },
+            OscParams {
+                waveform: waveforms[(case + 1) % 4],
+                detune_ct: 7.0,
+                level: 0.7,
+                ..Default::default()
+            },
+            OscParams {
+                waveform: waveforms[(case + 2) % 4],
+                octave: -1,
+                level: 0.5,
+                ..Default::default()
+            },
+        ],
         noise_level: 0.2,
         filter_env_amount: 0.6,
         filter_key_track: 0.5,

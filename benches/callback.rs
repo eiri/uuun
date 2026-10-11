@@ -13,7 +13,7 @@ use std::{
     time::Instant,
 };
 
-use dsp::patch::Patch;
+use dsp::patch::{OscParams, Patch};
 use engine::{
     audio::{BLOCK_SIZE, NUM_CHANNELS, audio_callback},
     channel::Channel,
@@ -38,8 +38,10 @@ struct Callback {
 impl Callback {
     fn new(sample_rate: f64, voices: usize) -> Self {
         let patch = Patch {
-            osc2_level: 1.0,
-            osc3_level: 1.0,
+            oscillators: [OscParams {
+                level: 1.0,
+                ..Default::default()
+            }; 3],
             noise_level: 1.0,
             filter_resonance: 0.9,
             filter_env_amount: 1.0,
