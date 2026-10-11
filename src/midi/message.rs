@@ -10,3 +10,15 @@ pub enum MidiEvent {
     PitchBend { channel: u8, value: f64 },
     ChannelPressure { channel: u8, value: f64 },
 }
+
+impl MidiEvent {
+    pub fn channel(&self) -> u8 {
+        match *self {
+            Self::NoteOn { channel, .. }
+            | Self::NoteOff { channel, .. }
+            | Self::ControlChange { channel, .. }
+            | Self::PitchBend { channel, .. }
+            | Self::ChannelPressure { channel, .. } => channel,
+        }
+    }
+}

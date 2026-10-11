@@ -202,6 +202,7 @@ impl AudioCallback {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::message::EngineEvent;
 
     fn render<T>(output: &mut [T])
     where
@@ -211,10 +212,12 @@ mod tests {
         let synth = Synth::new(patch, 48_000.0);
         let (tx, rx) = mpsc::sync_channel(1);
         let controls = Arc::new(Controls::new());
-        tx.send(EngineMessage::NoteOn {
+        tx.send(EngineMessage {
             channel: 0,
-            note: 60,
-            velocity: 100,
+            event: EngineEvent::NoteOn {
+                note: 60,
+                velocity: 100,
+            },
         })
         .unwrap();
 
@@ -268,10 +271,12 @@ mod tests {
             };
             let mut synth = Synth::new(patch, 48_000.0);
             for voice in 0..voices {
-                synth.handle(EngineMessage::NoteOn {
+                synth.handle(EngineMessage {
                     channel: voice / 8,
-                    note: 48 + (voice % 8) as u8,
-                    velocity: 127,
+                    event: EngineEvent::NoteOn {
+                        note: 48 + (voice % 8) as u8,
+                        velocity: 127,
+                    },
                 });
             }
             let (_tx, rx) = mpsc::sync_channel(1);
@@ -332,10 +337,12 @@ mod tests {
             for frames in [0, 1, 64, 256, 513, 1024] {
                 let patch = Patch::default();
                 let mut core = Synth::new(patch, 48_000.0);
-                let message = EngineMessage::NoteOn {
+                let message = EngineMessage {
                     channel: 0,
-                    note: 60,
-                    velocity: 100,
+                    event: EngineEvent::NoteOn {
+                        note: 60,
+                        velocity: 100,
+                    },
                 };
                 core.handle(message);
                 let (tx, rx) = mpsc::sync_channel(256);
