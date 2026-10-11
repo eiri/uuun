@@ -138,6 +138,44 @@ mod tests {
     }
 
     #[test]
+    fn retrigger_reuses_slot() {
+        let p = default_patch();
+        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        alloc.note_on(60, 100, &p);
+        alloc.note_on(61, 100, &p);
+        alloc.note_on(60, 80, &p);
+        assert_eq!(alloc.find_playing(60), Some(0));
+        assert_eq!(alloc.timestamps[0], 3);
+        assert_eq!(alloc.voices[2].status, VoiceStatus::Idle);
+    }
+
+    #[test]
+    fn stealing_priority_is_exact() {
+        let p = default_patch();
+        let mut alloc = VoiceAllocator::new(&p, 48_000.0);
+        for note in 60..68 {
+            alloc.note_on(note, 100, &p);
+        }
+        alloc.note_on(80, 100, &p);
+        assert_eq!(alloc.find_playing(80), Some(0));
+        assert_eq!(alloc.find_playing(60), None);
+
+        alloc.note_off(64);
+        alloc.note_off(62);
+        alloc.note_on(81, 100, &p);
+        assert_eq!(alloc.find_playing(81), Some(2));
+        assert_eq!(alloc.voices[4].status, VoiceStatus::Releasing);
+
+        alloc.voices[6].stop();
+        alloc.note_on(82, 100, &p);
+        assert_eq!(alloc.find_playing(82), Some(6));
+        alloc.note_on(83, 100, &p);
+        assert_eq!(alloc.find_playing(83), Some(4));
+        alloc.note_on(84, 100, &p);
+        assert_eq!(alloc.find_playing(84), Some(1));
+    }
+
+    #[test]
     fn basic_note_on_off() {
         let p = default_patch();
         let mut alloc = VoiceAllocator::new(&p, 48_000.0);

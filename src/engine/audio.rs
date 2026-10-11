@@ -271,6 +271,79 @@ mod tests {
     }
 
     #[test]
+    fn callback_handles_empty_and_small_output() {
+        for length in [0, 1, 2, 3, 64] {
+            let mut output = vec![f32::NAN; length];
+            render(&mut output);
+            assert!(output.iter().all(|s| s.is_finite()));
+            for frame in output.chunks(2) {
+                assert!(frame.iter().all(|s| *s == frame[0]));
+            }
+        }
+    }
+
+    #[test]
+    fn callback_signal_references() {
+        let expected = [
+            [
+                0.0,
+                -0.00534829031676054,
+                -0.014621907845139503,
+                0.0281984843313694,
+                0.0281984843313694,
+                0.012718249275118478,
+            ],
+            [
+                0.0,
+                -0.04239417985081673,
+                -0.07011008262634277,
+                0.20712819695472717,
+                0.2725902199745178,
+                0.12352681219251826,
+            ],
+            [
+                0.0,
+                -0.1695767194032669,
+                -0.2804403305053711,
+                0.8285127878189087,
+                1.0,
+                0.48679042827827923,
+            ],
+        ];
+        for (voices, expected) in [1, 8, 32].into_iter().zip(expected) {
+            let patch = Patch {
+                filter_cutoff_hz: 10_000.0,
+                ..Default::default()
+            };
+            let mut channels = std::array::from_fn(|_| Channel::new(patch, 48_000.0));
+            for voice in 0..voices {
+                channels[voice / 8].note_on(48 + (voice % 8) as u8, 127);
+            }
+            let (_tx, rx) = mpsc::sync_channel(1);
+            let mut output = [0.0_f32; 512];
+            audio_callback(
+                &mut output,
+                &rx,
+                &Controls::new(),
+                &mut channels,
+                &mut [0.0; BLOCK_SIZE],
+                &mut [0.0; BLOCK_SIZE],
+                2,
+            );
+            let mono: Vec<f64> = output.iter().step_by(2).map(|s| f64::from(*s)).collect();
+            for (actual, expected) in crate::dsp::reference::summary(&mono)
+                .into_iter()
+                .zip(expected)
+            {
+                assert!(
+                    (actual - expected).abs() <= 1e-6,
+                    "{voices} voices: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn invalid_patch_fails_before_audio_setup() {
         let patch = Patch {
             filter_cutoff_hz: f64::NAN,

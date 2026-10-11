@@ -139,6 +139,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn channels_are_independent() {
+        let mut changed = Channel::new(Patch::default(), 48_000.0);
+        let mut untouched = Channel::new(Patch::default(), 48_000.0);
+        let mut reference = Channel::new(Patch::default(), 48_000.0);
+        changed.control(Control::FilterCutoff, 200.0);
+        changed.pitch_bend(2.0);
+        changed.channel_pressure(1.0);
+        for ch in [&mut changed, &mut untouched, &mut reference] {
+            ch.note_on(60, 100);
+        }
+        let mut outputs = [[0.0; 256]; 3];
+        changed.process(&mut outputs[0], 256);
+        untouched.process(&mut outputs[1], 256);
+        reference.process(&mut outputs[2], 256);
+        assert_eq!(outputs[1], outputs[2]);
+        assert_ne!(outputs[0], outputs[1]);
+    }
+
+    #[test]
+    fn sustain_release_and_panic() {
+        let patch = Patch {
+            amp_env: crate::dsp::envelope::AdsrParams {
+                release: 0.001,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut ch = Channel::new(patch, 48_000.0);
+        ch.note_on(60, 100);
+        ch.process(&mut [0.0; 256], 256);
+        ch.set_sustain(true);
+        ch.note_off(60);
+        ch.set_sustain(false);
+        ch.process(&mut [0.0; 256], 256);
+        let mut output = [0.0; 256];
+        ch.process(&mut output, 256);
+        assert!(output.iter().all(|s| *s == 0.0));
+
+        ch.note_on(62, 100);
+        ch.process(&mut [0.0; 256], 256);
+        ch.all_sound_off();
+        ch.process(&mut output, 256);
+        assert!(output.iter().all(|s| *s == 0.0));
+        assert!(ch.presses.iter().all(|n| *n == 0));
+    }
+
+    #[test]
     fn channel_note_on_produces_audio() {
         let mut ch = Channel::new(Patch::default(), 48_000.0);
         ch.note_on(60, 100);

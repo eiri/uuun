@@ -191,6 +191,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reset_preserves_patch_mailboxes() {
+        let (tx, rx) = mpsc::sync_channel(2);
+        let controls = Arc::new(Controls::new());
+        let router = MidiRouter::new(tx, Arc::clone(&controls));
+        router.route(MidiEvent::PitchBend {
+            channel: 0,
+            value: 1.0,
+        });
+        router.route(MidiEvent::ChannelPressure {
+            channel: 0,
+            value: 0.8,
+        });
+        router.route(MidiEvent::ControlChange {
+            channel: 0,
+            cc: 74,
+            value: 127,
+        });
+        router.route(MidiEvent::ControlChange {
+            channel: 0,
+            cc: 121,
+            value: 0,
+        });
+        assert!(matches!(
+            rx.recv().unwrap(),
+            EngineMessage::ResetControllers { channel: 0 }
+        ));
+        let mut applied = Vec::new();
+        controls.drain(|ch, control, value| applied.push((ch, control, value)));
+        assert_eq!(applied, [(0, Control::FilterCutoff, 20_000.0)]);
+
+        router.route(MidiEvent::ControlChange {
+            channel: 0,
+            cc: 121,
+            value: 0,
+        });
+        router.route(MidiEvent::PitchBend {
+            channel: 0,
+            value: -0.5,
+        });
+        applied.clear();
+        controls.drain(|ch, control, value| applied.push((ch, control, value)));
+        assert_eq!(applied, [(0, Control::PitchBend, -1.0)]);
+    }
+
+    #[test]
+    fn ignores_unsupported_channels_and_ccs() {
+        let (tx, rx) = mpsc::sync_channel(8);
+        let controls = Arc::new(Controls::new());
+        let router = MidiRouter::new(tx, Arc::clone(&controls));
+        for channel in [4, 15] {
+            for event in [
+                MidiEvent::NoteOn {
+                    channel,
+                    note: 60,
+                    velocity: 100,
+                },
+                MidiEvent::NoteOff { channel, note: 60 },
+                MidiEvent::PitchBend {
+                    channel,
+                    value: 1.0,
+                },
+                MidiEvent::ChannelPressure {
+                    channel,
+                    value: 1.0,
+                },
+                MidiEvent::ControlChange {
+                    channel,
+                    cc: 121,
+                    value: 0,
+                },
+                MidiEvent::ControlChange {
+                    channel,
+                    cc: 74,
+                    value: 127,
+                },
+            ] {
+                router.route(event);
+            }
+        }
+        router.route(MidiEvent::ControlChange {
+            channel: 0,
+            cc: 3,
+            value: 127,
+        });
+        assert!(rx.try_recv().is_err());
+        controls.drain(|_, _, _| panic!("unexpected control"));
+    }
+
+    #[test]
     fn note_off_survives_full_queue() {
         let (tx, rx) = mpsc::sync_channel(1);
         let router = MidiRouter::new(tx, Arc::new(Controls::new()));
