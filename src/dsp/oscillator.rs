@@ -44,24 +44,6 @@ impl Oscillator {
         self.tri_integrator = 0.0;
     }
 
-    /// Render `n` samples of the chosen waveform at `freq` Hz into `buf`.
-    /// Frequencies at or above Nyquist are muted to prevent aliasing.
-    /// `buf` is accumulated into (not overwritten) so multiple oscillators can
-    /// be summed in the voice without an extra allocation.
-    #[cfg(test)]
-    pub fn process(
-        &mut self,
-        buf: &mut [f64],
-        n: usize,
-        freq: f64,
-        waveform: Waveform,
-        sample_rate: f64,
-    ) {
-        for s in buf[..n].iter_mut() {
-            *s += self.tick(freq, waveform, sample_rate);
-        }
-    }
-
     /// Sample once; muted pitches advance phase at the capped frequency.
     #[inline]
     pub fn tick(&mut self, freq: f64, waveform: Waveform, sample_rate: f64) -> f64 {
@@ -136,12 +118,14 @@ mod tests {
     fn render(waveform: Waveform) -> Vec<f64> {
         let mut osc = Oscillator::new();
         let mut buf = vec![0.0_f64; N];
-        osc.process(&mut buf, N, 440.0, waveform, SR);
+        for sample in &mut buf {
+            *sample = osc.tick(440.0, waveform, SR);
+        }
         buf
     }
 
     #[test]
-    fn scalar_matches_wrapper() {
+    fn scalar_partitions_match() {
         for waveform in [
             Waveform::Sine,
             Waveform::Saw,
@@ -161,7 +145,11 @@ mod tests {
                 let mut scalar = Oscillator::new();
                 let mut block = Oscillator::new();
                 let mut samples = [0.25; 257];
-                block.process(&mut samples, 257, freq, waveform, SR);
+                for chunk in samples.chunks_mut(63) {
+                    for sample in chunk {
+                        *sample += block.tick(freq, waveform, SR);
+                    }
+                }
                 for sample in samples {
                     assert_eq!(sample, 0.25 + scalar.tick(freq, waveform, SR));
                 }
@@ -242,7 +230,9 @@ mod tests {
         ] {
             let mut osc = Oscillator::new();
             let mut buf = [0.0; 257];
-            osc.process(&mut buf, 257, SR * 0.499, waveform, SR);
+            for sample in &mut buf {
+                *sample = osc.tick(SR * 0.499, waveform, SR);
+            }
 
             assert!(buf.iter().all(|sample| sample.is_finite()));
             assert!((0.0..1.0).contains(&osc.phase));
@@ -256,7 +246,9 @@ mod tests {
 
         let mut osc = Oscillator::new();
         let mut buf = [0.0; 257];
-        osc.process(&mut buf, 257, freq, Waveform::Saw, SR);
+        for sample in &mut buf {
+            *sample = osc.tick(freq, Waveform::Saw, SR);
+        }
 
         assert!(buf.iter().all(|sample| *sample == 0.0));
         assert!((0.0..1.0).contains(&osc.phase));

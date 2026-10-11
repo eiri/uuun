@@ -139,20 +139,6 @@ impl Envelope {
 
         self.value.clamp(0.0, 1.0)
     }
-
-    /// Fill `buf[..n]` with envelope values and multiply for amplitude shaping.
-    pub fn process_mul(&mut self, buf: &mut [f64], n: usize, params: &AdsrParams) {
-        for s in buf[..n].iter_mut() {
-            *s *= self.tick(params);
-        }
-    }
-
-    /// Fill `buf[..n]` with envelope values.
-    pub fn process_fill(&mut self, buf: &mut [f64], n: usize, params: &AdsrParams) {
-        for s in buf[..n].iter_mut() {
-            *s = self.tick(params);
-        }
-    }
 }
 
 #[cfg(test)]

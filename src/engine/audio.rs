@@ -185,7 +185,7 @@ pub(crate) fn audio_callback<T>(
 
         for channel in channels.iter_mut() {
             channel_mix[..frames].fill(0.0);
-            channel.process(&mut channel_mix[..frames], frames);
+            channel.process(&mut channel_mix[..frames]);
 
             for (mix, sample) in mix_f64.iter_mut().zip(channel_mix.iter()).take(frames) {
                 *mix += sample * CHANNEL_GAIN;

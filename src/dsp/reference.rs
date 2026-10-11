@@ -62,10 +62,8 @@ fn render(case: usize, block_size: usize) -> [f64; 512] {
     voice.note_on(67, 110, &patch);
     let mut output = [0.0; 512];
     for block in output.chunks_mut(block_size) {
-        let n = block.len();
         voice.process(
             block,
-            n,
             RenderParams {
                 patch: &patch,
                 pitch_bend: 1.5,

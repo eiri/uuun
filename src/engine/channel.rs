@@ -101,13 +101,13 @@ impl Channel {
         self.pressure = value;
     }
 
-    pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
+    pub fn process(&mut self, out_buf: &mut [f64]) {
         let params = RenderParams {
             patch: &self.patch,
             pitch_bend: self.pitch_bend,
             pressure: self.pressure,
         };
-        self.allocator.process(out_buf, n, params);
+        self.allocator.process(out_buf, params);
     }
 }
 
@@ -122,7 +122,7 @@ mod tests {
             let mut plain = Channel::new(Patch::default(), 48_000.0);
             for ch in [&mut changed, &mut plain] {
                 ch.note_on(60, 100);
-                ch.process(&mut [0.0; 256], 256);
+                ch.process(&mut [0.0; 256]);
                 if releasing {
                     ch.note_off(60);
                 }
@@ -132,8 +132,8 @@ mod tests {
             changed.control(Control::ChannelPressure, 0.5);
             let mut a = [0.0; 256];
             let mut b = [0.0; 256];
-            changed.process(&mut a, 256);
-            plain.process(&mut b, 256);
+            changed.process(&mut a);
+            plain.process(&mut b);
             assert_ne!(a, b, "releasing {releasing}");
         }
     }
@@ -153,8 +153,8 @@ mod tests {
         expected.note_on(60, 100);
         let mut a = [0.0; 256];
         let mut b = [0.0; 256];
-        changed.process(&mut a, 256);
-        expected.process(&mut b, 256);
+        changed.process(&mut a);
+        expected.process(&mut b);
         assert_eq!(a, b);
     }
 
@@ -170,9 +170,9 @@ mod tests {
             ch.note_on(60, 100);
         }
         let mut outputs = [[0.0; 256]; 3];
-        changed.process(&mut outputs[0], 256);
-        untouched.process(&mut outputs[1], 256);
-        reference.process(&mut outputs[2], 256);
+        changed.process(&mut outputs[0]);
+        untouched.process(&mut outputs[1]);
+        reference.process(&mut outputs[2]);
         assert_eq!(outputs[1], outputs[2]);
         assert_ne!(outputs[0], outputs[1]);
     }
@@ -188,19 +188,19 @@ mod tests {
         };
         let mut ch = Channel::new(patch, 48_000.0);
         ch.note_on(60, 100);
-        ch.process(&mut [0.0; 256], 256);
+        ch.process(&mut [0.0; 256]);
         ch.set_sustain(true);
         ch.note_off(60);
         ch.set_sustain(false);
-        ch.process(&mut [0.0; 256], 256);
+        ch.process(&mut [0.0; 256]);
         let mut output = [0.0; 256];
-        ch.process(&mut output, 256);
+        ch.process(&mut output);
         assert!(output.iter().all(|s| *s == 0.0));
 
         ch.note_on(62, 100);
-        ch.process(&mut [0.0; 256], 256);
+        ch.process(&mut [0.0; 256]);
         ch.all_sound_off();
-        ch.process(&mut output, 256);
+        ch.process(&mut output);
         assert!(output.iter().all(|s| *s == 0.0));
         assert!(ch.presses.iter().all(|n| *n == 0));
     }
@@ -210,7 +210,7 @@ mod tests {
         let mut ch = Channel::new(Patch::default(), 48_000.0);
         ch.note_on(60, 100);
         let mut buf = [0.0_f64; 128];
-        ch.process(&mut buf, 128);
+        ch.process(&mut buf);
         let peak = buf.iter().cloned().map(f64::abs).fold(0.0_f64, f64::max);
         assert!(peak > 1e-6);
     }
@@ -230,8 +230,8 @@ mod tests {
 
         let mut plain_buf = [0.0_f64; 256];
         let mut bent_buf = [0.0_f64; 256];
-        plain.process(&mut plain_buf, 256);
-        bent.process(&mut bent_buf, 256);
+        plain.process(&mut plain_buf);
+        bent.process(&mut bent_buf);
 
         assert_ne!(plain_buf, bent_buf);
     }
@@ -251,8 +251,8 @@ mod tests {
 
         let mut plain_buf = [0.0_f64; 256];
         let mut pressed_buf = [0.0_f64; 256];
-        plain.process(&mut plain_buf, 256);
-        pressed.process(&mut pressed_buf, 256);
+        plain.process(&mut plain_buf);
+        pressed.process(&mut pressed_buf);
 
         assert_ne!(plain_buf, pressed_buf);
     }
