@@ -172,15 +172,12 @@ impl Voice {
 
             let mut mix = 0.0;
             for (oscillator, params) in self.oscillators.iter_mut().zip(&p.oscillators) {
-                let mut sample = [0.0; 1];
-                oscillator.process(
-                    &mut sample,
-                    1,
+                let sample = oscillator.tick(
                     apply_pitch_offset(bp, params.octave, params.semitone, params.detune_ct),
                     params.waveform,
                     self.sample_rate,
                 );
-                mix += sample[0] * params.level;
+                mix += sample * params.level;
             }
             mix_buf[i] = mix * source_gain;
         }
