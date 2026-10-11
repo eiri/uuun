@@ -1,4 +1,4 @@
-use crate::dsp::patch::Patch;
+use crate::dsp::{patch::Patch, voice::RenderParams};
 use crate::{engine::allocator::VoiceAllocator, parameter::Control};
 
 pub struct Channel {
@@ -13,7 +13,7 @@ pub struct Channel {
 
 impl Channel {
     pub fn new(patch: Patch, sample_rate: f64) -> Self {
-        let allocator = VoiceAllocator::new(&patch, sample_rate);
+        let allocator = VoiceAllocator::new(sample_rate);
         Self {
             patch,
             allocator,
@@ -30,8 +30,6 @@ impl Channel {
         self.presses[note] = self.presses[note].saturating_add(1);
         self.deferred[note] = false;
         self.allocator.note_on(note as u8, velocity, &self.patch);
-        self.allocator.pitch_bend(self.pitch_bend);
-        self.allocator.channel_pressure(self.pressure);
     }
 
     pub fn note_off(&mut self, note: u8) {
@@ -88,33 +86,77 @@ impl Channel {
             Control::PitchBend => self.pitch_bend(value),
             Control::ChannelPressure => self.channel_pressure(value),
             _ => {
-                if self.patch.set_control(control, value) {
-                    self.allocator.apply_patch(&self.patch);
-                }
+                self.patch.set_control(control, value);
             }
         }
     }
 
-    /// Apply a pitch-bend offset (in semitones) to all active voices.
+    /// Set the channel pitch-bend offset in semitones.
     pub fn pitch_bend(&mut self, semitones: f64) {
         self.pitch_bend = semitones;
-        self.allocator.pitch_bend(semitones);
     }
 
-    /// Apply channel aftertouch (0.0..1.0) to all active voices.
+    /// Set channel aftertouch (0.0..1.0).
     pub fn channel_pressure(&mut self, value: f64) {
         self.pressure = value;
-        self.allocator.channel_pressure(value);
     }
 
     pub fn process(&mut self, out_buf: &mut [f64], n: usize) {
-        self.allocator.process(out_buf, n);
+        let params = RenderParams {
+            patch: &self.patch,
+            pitch_bend: self.pitch_bend,
+            pressure: self.pressure,
+        };
+        self.allocator.process(out_buf, n, params);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controls_reach_current_notes() {
+        for releasing in [false, true] {
+            let mut changed = Channel::new(Patch::default(), 48_000.0);
+            let mut plain = Channel::new(Patch::default(), 48_000.0);
+            for ch in [&mut changed, &mut plain] {
+                ch.note_on(60, 100);
+                ch.process(&mut [0.0; 256], 256);
+                if releasing {
+                    ch.note_off(60);
+                }
+            }
+            changed.control(Control::FilterCutoff, 200.0);
+            changed.control(Control::PitchBend, 2.0);
+            changed.control(Control::ChannelPressure, 0.5);
+            let mut a = [0.0; 256];
+            let mut b = [0.0; 256];
+            changed.process(&mut a, 256);
+            plain.process(&mut b, 256);
+            assert_ne!(a, b, "releasing {releasing}");
+        }
+    }
+
+    #[test]
+    fn patch_controls_reach_new_notes() {
+        let mut changed = Channel::new(Patch::default(), 48_000.0);
+        changed.control(Control::FilterCutoff, 200.0);
+        let mut expected = Channel::new(
+            Patch {
+                filter_cutoff_hz: 200.0,
+                ..Default::default()
+            },
+            48_000.0,
+        );
+        changed.note_on(60, 100);
+        expected.note_on(60, 100);
+        let mut a = [0.0; 256];
+        let mut b = [0.0; 256];
+        changed.process(&mut a, 256);
+        expected.process(&mut b, 256);
+        assert_eq!(a, b);
+    }
 
     #[test]
     fn channels_are_independent() {
