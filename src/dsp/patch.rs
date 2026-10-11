@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::parameter::Control;
+
 use super::{
     envelope::AdsrParams,
     glide::GlideType,
@@ -60,6 +62,33 @@ pub struct Patch {
 }
 
 impl Patch {
+    /// Set a patch control; return false for channel-owned runtime controls.
+    pub fn set_control(&mut self, control: Control, value: f64) -> bool {
+        match control {
+            Control::FilterCutoff => self.filter_cutoff_hz = value,
+            Control::FilterResonance => self.filter_resonance = value,
+            Control::FilterEnvAmount => self.filter_env_amount = value,
+            Control::FilterKeyTrack => self.filter_key_track = value,
+            Control::AmpAttack => self.amp_env.attack = value,
+            Control::AmpDecay => self.amp_env.decay = value,
+            Control::AmpSustain => self.amp_env.sustain = value,
+            Control::AmpRelease => self.amp_env.release = value,
+            Control::FilterAttack => self.filter_env.attack = value,
+            Control::FilterDecay => self.filter_env.decay = value,
+            Control::FilterSustain => self.filter_env.sustain = value,
+            Control::FilterRelease => self.filter_env.release = value,
+            Control::LfoRate => self.lfo_rate_hz = value,
+            Control::LfoDepth => self.lfo_depth = value,
+            Control::Osc1Level => self.osc1_level = value,
+            Control::Osc2Level => self.osc2_level = value,
+            Control::Osc3Level => self.osc3_level = value,
+            Control::NoiseLevel => self.noise_level = value,
+            Control::GlideTime => self.glide_time = value,
+            Control::PitchBend | Control::ChannelPressure => return false,
+        }
+        true
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         for (name, value, min, max) in [
             ("osc1_detune_ct", self.osc1_detune_ct, -100.0, 100.0),
@@ -173,6 +202,14 @@ impl Default for Patch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_runtime_controls() {
+        let mut patch = Patch::default();
+        assert!(!patch.set_control(Control::PitchBend, 1.0));
+        assert!(!patch.set_control(Control::ChannelPressure, 1.0));
+        assert_eq!(patch.filter_cutoff_hz, 2_000.0);
+    }
 
     #[test]
     fn default_patch_is_valid() {

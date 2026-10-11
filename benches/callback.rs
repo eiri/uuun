@@ -4,6 +4,8 @@
 mod dsp;
 #[path = "../src/engine/mod.rs"]
 mod engine;
+#[path = "../src/parameter.rs"]
+mod parameter;
 
 use std::{
     hint::black_box,

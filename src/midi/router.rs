@@ -5,18 +5,15 @@ use std::sync::{
 };
 
 use crate::{
-    engine::{
-        audio::NUM_CHANNELS,
-        control::{Control, Controls},
-        message::EngineMessage,
-    },
+    engine::{audio::NUM_CHANNELS, control::Controls, message::EngineMessage},
     midi::{
         cc_map::{
-            ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, CcTarget, RESET_CONTROLLERS_CC, SUSTAIN_CC,
-            cc_target,
+            ALL_NOTES_OFF_CC, ALL_SOUND_OFF_CC, RESET_CONTROLLERS_CC, SUSTAIN_CC, cc_target,
+            cc_value,
         },
         message::MidiEvent,
     },
+    parameter::Control,
 };
 
 /// Maximum pitch-bend range in semitones, +2/-2
@@ -111,12 +108,11 @@ impl MidiRouter {
                     _ => {}
                 }
 
-                let target = cc_target(cc);
-                if target == CcTarget::Unassigned {
-                    return;
+                if let Some(control) = cc_target(cc)
+                    && let Some(value) = cc_value(control, value as f64 / 127.0)
+                {
+                    self.controls.set(ch, control, value);
                 }
-                let normalised = value as f64 / 127.0; // 0.0..1.0
-                self.apply_cc(ch, target, normalised);
             }
 
             MidiEvent::PitchBend { channel, value } => {
@@ -153,37 +149,6 @@ impl MidiRouter {
         // Releases must survive a full queue to prevent stuck notes.
         let _ = self.engine_tx.send(msg);
     }
-
-    fn apply_cc(&self, ch: usize, target: CcTarget, v: f64) {
-        let (control, value) = match target {
-            CcTarget::FilterCutoff => (Control::FilterCutoff, 20.0 * 1000.0_f64.powf(v)),
-            CcTarget::FilterResonance => (Control::FilterResonance, v.clamp(0.0, 0.99)),
-            CcTarget::FilterEnvAmount => (Control::FilterEnvAmount, v),
-            CcTarget::FilterKeyTrack => (Control::FilterKeyTrack, v),
-            CcTarget::AmpAttack => (Control::AmpAttack, map_adsr_time(v)),
-            CcTarget::AmpDecay => (Control::AmpDecay, map_adsr_time(v)),
-            CcTarget::AmpSustain => (Control::AmpSustain, v),
-            CcTarget::AmpRelease => (Control::AmpRelease, map_adsr_time(v)),
-            CcTarget::FilterAttack => (Control::FilterAttack, map_adsr_time(v)),
-            CcTarget::FilterDecay => (Control::FilterDecay, map_adsr_time(v)),
-            CcTarget::FilterSustain => (Control::FilterSustain, v),
-            CcTarget::FilterRelease => (Control::FilterRelease, map_adsr_time(v)),
-            CcTarget::LfoRate => (Control::LfoRate, 0.01 * 3000.0_f64.powf(v)),
-            CcTarget::LfoDepth => (Control::LfoDepth, v),
-            CcTarget::Osc1Level => (Control::Osc1Level, v),
-            CcTarget::Osc2Level => (Control::Osc2Level, v),
-            CcTarget::Osc3Level => (Control::Osc3Level, v),
-            CcTarget::NoiseLevel => (Control::NoiseLevel, v),
-            CcTarget::GlideTime => (Control::GlideTime, v * 4.0),
-            CcTarget::Unassigned => return,
-        };
-
-        self.controls.set(ch, control, value);
-    }
-}
-
-fn map_adsr_time(v: f64) -> f64 {
-    0.001 * 10_000.0_f64.powf(v)
 }
 
 #[cfg(test)]
