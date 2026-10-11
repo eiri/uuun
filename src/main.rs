@@ -1,6 +1,7 @@
 mod dsp;
 mod engine;
 mod midi;
+mod parameter;
 
 use std::{env, thread, time::Duration};
 

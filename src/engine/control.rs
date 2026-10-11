@@ -1,34 +1,8 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use crate::engine::audio::NUM_CHANNELS;
+use crate::{engine::audio::NUM_CHANNELS, parameter::Control};
 
-const CONTROL_COUNT: usize = 21;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Control {
-    FilterCutoff,
-    FilterResonance,
-    FilterEnvAmount,
-    FilterKeyTrack,
-    AmpAttack,
-    AmpDecay,
-    AmpSustain,
-    AmpRelease,
-    FilterAttack,
-    FilterDecay,
-    FilterSustain,
-    FilterRelease,
-    LfoRate,
-    LfoDepth,
-    Osc1Level,
-    Osc2Level,
-    Osc3Level,
-    NoiseLevel,
-    GlideTime,
-    PitchBend,
-    ChannelPressure,
-}
+const CONTROL_COUNT: usize = Control::ALL.len();
 
 /// Fixed mailboxes that overwrite stale controls without blocking audio events.
 pub struct Controls {
@@ -70,7 +44,7 @@ impl Controls {
             let mut dirty = self.dirty[channel].swap(0, Ordering::Acquire);
             while dirty != 0 {
                 let index = dirty.trailing_zeros() as usize;
-                let control = CONTROLS[index];
+                let control = Control::ALL[index];
                 let value = f64::from_bits(self.values[channel][index].load(Ordering::Relaxed));
 
                 apply(channel, control, value);
@@ -85,30 +59,6 @@ impl Default for Controls {
         Self::new()
     }
 }
-
-const CONTROLS: [Control; CONTROL_COUNT] = [
-    Control::FilterCutoff,
-    Control::FilterResonance,
-    Control::FilterEnvAmount,
-    Control::FilterKeyTrack,
-    Control::AmpAttack,
-    Control::AmpDecay,
-    Control::AmpSustain,
-    Control::AmpRelease,
-    Control::FilterAttack,
-    Control::FilterDecay,
-    Control::FilterSustain,
-    Control::FilterRelease,
-    Control::LfoRate,
-    Control::LfoDepth,
-    Control::Osc1Level,
-    Control::Osc2Level,
-    Control::Osc3Level,
-    Control::NoiseLevel,
-    Control::GlideTime,
-    Control::PitchBend,
-    Control::ChannelPressure,
-];
 
 #[cfg(test)]
 mod tests {

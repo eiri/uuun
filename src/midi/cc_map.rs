@@ -1,97 +1,52 @@
+use crate::parameter::Control;
+
 pub const SUSTAIN_CC: u8 = 64;
 pub const ALL_SOUND_OFF_CC: u8 = 120;
 pub const RESET_CONTROLLERS_CC: u8 = 121;
 pub const ALL_NOTES_OFF_CC: u8 = 123;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CcTarget {
-    FilterCutoff,
-    FilterResonance,
-    FilterEnvAmount,
-    FilterKeyTrack,
-
-    AmpAttack,
-    AmpDecay,
-    AmpSustain,
-    AmpRelease,
-
-    FilterAttack,
-    FilterDecay,
-    FilterSustain,
-    FilterRelease,
-
-    LfoRate,
-    LfoDepth,
-
-    Osc1Level,
-    Osc2Level,
-    Osc3Level,
-    NoiseLevel,
-
-    GlideTime,
-
-    Unassigned,
+/// Map assigned CC numbers to patch controls.
+pub fn cc_target(cc: u8) -> Option<Control> {
+    Some(match cc {
+        5 => Control::GlideTime,
+        74 => Control::FilterCutoff,
+        71 => Control::FilterResonance,
+        86 => Control::FilterEnvAmount,
+        85 => Control::FilterKeyTrack,
+        73 => Control::AmpAttack,
+        75 => Control::AmpDecay,
+        79 => Control::AmpSustain,
+        72 => Control::AmpRelease,
+        102 => Control::FilterAttack,
+        103 => Control::FilterDecay,
+        104 => Control::FilterSustain,
+        105 => Control::FilterRelease,
+        76 => Control::LfoRate,
+        77 => Control::LfoDepth,
+        106 => Control::Osc1Level,
+        107 => Control::Osc2Level,
+        108 => Control::Osc3Level,
+        109 => Control::NoiseLevel,
+        _ => return None,
+    })
 }
 
-/// Map a raw CC number to a `CcTarget`.
-///
-/// CC assignments (no two arms may share the same integer):
-///
-/// | CC | Parameter         |
-/// |----|-------------------|
-/// |  5 | Glide time        |
-/// | 71 | Filter resonance  |
-/// | 72 | Amp release       |
-/// | 73 | Amp attack        |
-/// | 74 | Filter cutoff     |
-/// | 75 | Amp decay         |
-/// | 76 | LFO rate          |
-/// | 77 | LFO depth         |
-/// | 79 | Amp sustain       |
-/// | 85 | Filter key-track  |
-/// | 86 | Filter env amount |
-/// |102 | Filter attack     |
-/// |103 | Filter decay      |
-/// |104 | Filter sustain    |
-/// |105 | Filter release    |
-/// |106 | Osc 1 level       |
-/// |107 | Osc 2 level       |
-/// |108 | Osc 3 level       |
-/// |109 | Noise level       |
-pub fn cc_target(cc: u8) -> CcTarget {
-    match cc {
-        5 => CcTarget::GlideTime,
-
-        // Filter shape
-        74 => CcTarget::FilterCutoff,
-        71 => CcTarget::FilterResonance,
-        86 => CcTarget::FilterEnvAmount,
-        85 => CcTarget::FilterKeyTrack,
-
-        // Amp ADSR (GM-standard CC numbers)
-        73 => CcTarget::AmpAttack,
-        75 => CcTarget::AmpDecay,
-        79 => CcTarget::AmpSustain,
-        72 => CcTarget::AmpRelease,
-
-        // Filter ADSR — use "undefined" range so they don't collide with amp
-        102 => CcTarget::FilterAttack,
-        103 => CcTarget::FilterDecay,
-        104 => CcTarget::FilterSustain,
-        105 => CcTarget::FilterRelease,
-
-        // LFO
-        76 => CcTarget::LfoRate,
-        77 => CcTarget::LfoDepth,
-
-        // Mixer levels
-        106 => CcTarget::Osc1Level,
-        107 => CcTarget::Osc2Level,
-        108 => CcTarget::Osc3Level,
-        109 => CcTarget::NoiseLevel,
-
-        _ => CcTarget::Unassigned,
-    }
+/// Scale normalized CC values; runtime controls already arrive decoded.
+pub fn cc_value(control: Control, v: f64) -> Option<f64> {
+    Some(match control {
+        Control::FilterCutoff => 20.0 * 1000.0_f64.powf(v),
+        Control::FilterResonance => v.clamp(0.0, 0.99),
+        Control::AmpAttack
+        | Control::AmpDecay
+        | Control::AmpRelease
+        | Control::FilterAttack
+        | Control::FilterDecay
+        | Control::FilterRelease => 0.001 * 10_000.0_f64.powf(v),
+        Control::LfoRate => 0.01 * 3000.0_f64.powf(v),
+        Control::GlideTime => 4.0 * v,
+        Control::PitchBend | Control::ChannelPressure => return None,
+        _ => v,
+    })
 }
 
 #[cfg(test)]
@@ -101,31 +56,33 @@ mod tests {
     #[test]
     fn maps_assigned_controllers() {
         let mappings = [
-            (5, CcTarget::GlideTime),
-            (71, CcTarget::FilterResonance),
-            (72, CcTarget::AmpRelease),
-            (73, CcTarget::AmpAttack),
-            (74, CcTarget::FilterCutoff),
-            (75, CcTarget::AmpDecay),
-            (76, CcTarget::LfoRate),
-            (77, CcTarget::LfoDepth),
-            (79, CcTarget::AmpSustain),
-            (85, CcTarget::FilterKeyTrack),
-            (86, CcTarget::FilterEnvAmount),
-            (102, CcTarget::FilterAttack),
-            (103, CcTarget::FilterDecay),
-            (104, CcTarget::FilterSustain),
-            (105, CcTarget::FilterRelease),
-            (106, CcTarget::Osc1Level),
-            (107, CcTarget::Osc2Level),
-            (108, CcTarget::Osc3Level),
-            (109, CcTarget::NoiseLevel),
+            (5, Control::GlideTime),
+            (71, Control::FilterResonance),
+            (72, Control::AmpRelease),
+            (73, Control::AmpAttack),
+            (74, Control::FilterCutoff),
+            (75, Control::AmpDecay),
+            (76, Control::LfoRate),
+            (77, Control::LfoDepth),
+            (79, Control::AmpSustain),
+            (85, Control::FilterKeyTrack),
+            (86, Control::FilterEnvAmount),
+            (102, Control::FilterAttack),
+            (103, Control::FilterDecay),
+            (104, Control::FilterSustain),
+            (105, Control::FilterRelease),
+            (106, Control::Osc1Level),
+            (107, Control::Osc2Level),
+            (108, Control::Osc3Level),
+            (109, Control::NoiseLevel),
         ];
 
         for (cc, target) in mappings {
-            assert_eq!(cc_target(cc), target, "CC {cc}");
+            assert_eq!(cc_target(cc), Some(target), "CC {cc}");
         }
-        assert_eq!(cc_target(0), CcTarget::Unassigned);
-        assert_eq!(cc_target(127), CcTarget::Unassigned);
+        assert_eq!(cc_target(0), None);
+        assert_eq!(cc_target(127), None);
+        assert_eq!(cc_value(Control::PitchBend, 1.0), None);
+        assert_eq!(cc_value(Control::ChannelPressure, 1.0), None);
     }
 }

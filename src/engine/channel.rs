@@ -1,5 +1,5 @@
 use crate::dsp::patch::Patch;
-use crate::engine::{allocator::VoiceAllocator, control::Control};
+use crate::{engine::allocator::VoiceAllocator, parameter::Control};
 
 pub struct Channel {
     patch: Patch,
@@ -85,36 +85,14 @@ impl Channel {
 
     pub fn control(&mut self, control: Control, value: f64) {
         match control {
-            Control::FilterCutoff => self.patch.filter_cutoff_hz = value,
-            Control::FilterResonance => self.patch.filter_resonance = value,
-            Control::FilterEnvAmount => self.patch.filter_env_amount = value,
-            Control::FilterKeyTrack => self.patch.filter_key_track = value,
-            Control::AmpAttack => self.patch.amp_env.attack = value,
-            Control::AmpDecay => self.patch.amp_env.decay = value,
-            Control::AmpSustain => self.patch.amp_env.sustain = value,
-            Control::AmpRelease => self.patch.amp_env.release = value,
-            Control::FilterAttack => self.patch.filter_env.attack = value,
-            Control::FilterDecay => self.patch.filter_env.decay = value,
-            Control::FilterSustain => self.patch.filter_env.sustain = value,
-            Control::FilterRelease => self.patch.filter_env.release = value,
-            Control::LfoRate => self.patch.lfo_rate_hz = value,
-            Control::LfoDepth => self.patch.lfo_depth = value,
-            Control::Osc1Level => self.patch.osc1_level = value,
-            Control::Osc2Level => self.patch.osc2_level = value,
-            Control::Osc3Level => self.patch.osc3_level = value,
-            Control::NoiseLevel => self.patch.noise_level = value,
-            Control::GlideTime => self.patch.glide_time = value,
-            Control::PitchBend => {
-                self.pitch_bend(value);
-                return;
-            }
-            Control::ChannelPressure => {
-                self.channel_pressure(value);
-                return;
+            Control::PitchBend => self.pitch_bend(value),
+            Control::ChannelPressure => self.channel_pressure(value),
+            _ => {
+                if self.patch.set_control(control, value) {
+                    self.allocator.apply_patch(&self.patch);
+                }
             }
         }
-
-        self.allocator.apply_patch(&self.patch);
     }
 
     /// Apply a pitch-bend offset (in semitones) to all active voices.
