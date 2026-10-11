@@ -155,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn retrigger_interpolates_on_time() {
+    fn retrigger_attack_timing() {
         let p = AdsrParams {
             attack: 0.01,
             decay: 0.01,

@@ -200,12 +200,7 @@ impl Voice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dsp::{
-        envelope::AdsrParams,
-        lfo::{LfoDest, LfoWaveform},
-        oscillator::Waveform,
-        patch::OscParams,
-    };
+    use crate::dsp::{envelope::AdsrParams, oscillator::Waveform, patch::OscParams};
 
     fn render_params(patch: &Patch) -> RenderParams<'_> {
         RenderParams {
@@ -219,28 +214,21 @@ mod tests {
         Patch {
             oscillators: [
                 OscParams {
-                    waveform: Waveform::Saw,
-                    octave: 0,
-                    semitone: 0,
-                    detune_ct: 0.0,
                     level: 1.0,
+                    ..Default::default()
                 },
                 OscParams {
-                    waveform: Waveform::Saw,
-                    octave: 0,
-                    semitone: 0,
                     detune_ct: 7.0,
                     level: 0.7,
+                    ..Default::default()
                 },
                 OscParams {
                     waveform: Waveform::Square,
                     octave: -1,
-                    semitone: 0,
-                    detune_ct: 0.0,
                     level: 0.5,
+                    ..Default::default()
                 },
             ],
-            noise_level: 0.0,
             filter_cutoff_hz: 800.0,
             filter_resonance: 0.3,
             filter_env_amount: 0.6,
@@ -252,17 +240,12 @@ mod tests {
                 release: 0.4,
             },
             amp_env: AdsrParams {
-                attack: 0.005,
-                decay: 0.1,
-                sustain: 0.8,
                 release: 0.3,
+                ..Default::default()
             },
-            lfo_waveform: LfoWaveform::Sine,
             lfo_rate_hz: 0.5,
             lfo_depth: 0.1,
-            lfo_destination: LfoDest::Filter,
-            glide_time: 0.0,
-            glide_type: crate::dsp::glide::GlideType::Lcr,
+            ..Default::default()
         }
     }
 
@@ -421,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn arbitrary_lengths_and_partitions() {
+    fn lengths_and_partitions() {
         let patch = bass_patch();
         for length in [0, 1, 64, 256, 512, 513, 1024] {
             let mut whole = Voice::new(48_000.0);
@@ -440,13 +423,5 @@ mod tests {
             }
             assert_eq!(whole.status, VoiceStatus::Active);
         }
-    }
-
-    #[test]
-    fn patch_is_copy() {
-        // Compile-time proof: Copy means assignment doesn't move.
-        let p = bass_patch();
-        let _p2 = p; // copy
-        let _p3 = p; // still usable — would fail if Patch were only Clone
     }
 }

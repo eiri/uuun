@@ -111,13 +111,9 @@ impl VoiceAllocator {
 mod tests {
     use super::*;
 
-    fn default_patch() -> Patch {
-        Patch::default()
-    }
-
     #[test]
     fn retrigger_reuses_slot() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         alloc.note_on(61, 100, &p);
@@ -129,7 +125,7 @@ mod tests {
 
     #[test]
     fn stealing_priority_is_exact() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..68 {
             alloc.note_on(note, 100, &p);
@@ -155,7 +151,7 @@ mod tests {
 
     #[test]
     fn basic_note_on_off() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         let active = alloc
@@ -175,7 +171,7 @@ mod tests {
 
     #[test]
     fn polyphony_up_to_max() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..60 + MAX_VOICES as u8 {
             alloc.note_on(note, 100, &p);
@@ -190,7 +186,7 @@ mod tests {
 
     #[test]
     fn stealing_beyond_max_voices() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         // Fill all 8 voices.
         for note in 60..60 + MAX_VOICES as u8 {
@@ -211,7 +207,7 @@ mod tests {
 
     #[test]
     fn all_sound_off_stops_immediately() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         alloc.all_sound_off();
@@ -231,7 +227,7 @@ mod tests {
 
     #[test]
     fn all_notes_off_silences_everything() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         for note in 60..68_u8 {
             alloc.note_on(note, 100, &p);
@@ -247,7 +243,7 @@ mod tests {
 
     #[test]
     fn allocator_produces_audio() {
-        let p = default_patch();
+        let p = Patch::default();
         let mut alloc = VoiceAllocator::new(48_000.0);
         alloc.note_on(60, 100, &p);
         let mut buf = [0.0_f64; 128];
