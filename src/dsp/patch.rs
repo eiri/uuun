@@ -10,28 +10,33 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Patch {
-    pub osc1_waveform: Waveform,
+pub struct OscParams {
+    pub waveform: Waveform,
     /// Octave offset relative to the played MIDI note (-2 / +2).
-    pub osc1_octave: i8,
+    pub octave: i8,
     /// Semitone offset (-12 / +12).
-    pub osc1_semitone: i8,
+    pub semitone: i8,
     /// Fine detune in cents (-100.0 / +100.0).
-    pub osc1_detune_ct: f64,
+    pub detune_ct: f64,
     /// Linear mix level (0.0 / 1.0).
-    pub osc1_level: f64,
+    pub level: f64,
+}
 
-    pub osc2_waveform: Waveform,
-    pub osc2_octave: i8,
-    pub osc2_semitone: i8,
-    pub osc2_detune_ct: f64,
-    pub osc2_level: f64,
+impl Default for OscParams {
+    fn default() -> Self {
+        Self {
+            waveform: Waveform::Saw,
+            octave: 0,
+            semitone: 0,
+            detune_ct: 0.0,
+            level: 0.0,
+        }
+    }
+}
 
-    pub osc3_waveform: Waveform,
-    pub osc3_octave: i8,
-    pub osc3_semitone: i8,
-    pub osc3_detune_ct: f64,
-    pub osc3_level: f64,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Patch {
+    pub oscillators: [OscParams; 3],
 
     /// White-noise mix level (0.0 / 1.0).
     pub noise_level: f64,
@@ -79,9 +84,9 @@ impl Patch {
             Control::FilterRelease => self.filter_env.release = value,
             Control::LfoRate => self.lfo_rate_hz = value,
             Control::LfoDepth => self.lfo_depth = value,
-            Control::Osc1Level => self.osc1_level = value,
-            Control::Osc2Level => self.osc2_level = value,
-            Control::Osc3Level => self.osc3_level = value,
+            Control::Osc1Level => self.oscillators[0].level = value,
+            Control::Osc2Level => self.oscillators[1].level = value,
+            Control::Osc3Level => self.oscillators[2].level = value,
             Control::NoiseLevel => self.noise_level = value,
             Control::GlideTime => self.glide_time = value,
             Control::PitchBend | Control::ChannelPressure => return false,
@@ -90,13 +95,12 @@ impl Patch {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        // Preserve oscillator error names and floating-point validation order.
+        for (index, osc) in self.oscillators.iter().enumerate() {
+            check_osc(index, "detune_ct", osc.detune_ct, -100.0, 100.0)?;
+            check_osc(index, "level", osc.level, 0.0, 1.0)?;
+        }
         for (name, value, min, max) in [
-            ("osc1_detune_ct", self.osc1_detune_ct, -100.0, 100.0),
-            ("osc1_level", self.osc1_level, 0.0, 1.0),
-            ("osc2_detune_ct", self.osc2_detune_ct, -100.0, 100.0),
-            ("osc2_level", self.osc2_level, 0.0, 1.0),
-            ("osc3_detune_ct", self.osc3_detune_ct, -100.0, 100.0),
-            ("osc3_level", self.osc3_level, 0.0, 1.0),
             ("noise_level", self.noise_level, 0.0, 1.0),
             ("filter_cutoff_hz", self.filter_cutoff_hz, 20.0, 20_000.0),
             ("filter_resonance", self.filter_resonance, 0.0, 1.0),
@@ -122,20 +126,26 @@ impl Patch {
             check_range(name, value, 0.0, max)?;
         }
 
-        for (name, value, min, max) in [
-            ("osc1_octave", self.osc1_octave, -2, 2),
-            ("osc2_octave", self.osc2_octave, -2, 2),
-            ("osc3_octave", self.osc3_octave, -2, 2),
-            ("osc1_semitone", self.osc1_semitone, -12, 12),
-            ("osc2_semitone", self.osc2_semitone, -12, 12),
-            ("osc3_semitone", self.osc3_semitone, -12, 12),
-        ] {
-            if !(min..=max).contains(&value) {
-                return Err(format!("{name} must be within {min}..={max}"));
-            }
+        // All octaves precede semitones in the existing validation contract.
+        for (index, osc) in self.oscillators.iter().enumerate() {
+            check_osc(index, "octave", f64::from(osc.octave), -2.0, 2.0)?;
+        }
+        for (index, osc) in self.oscillators.iter().enumerate() {
+            check_osc(index, "semitone", f64::from(osc.semitone), -12.0, 12.0)?;
         }
 
         Ok(())
+    }
+}
+
+fn check_osc(index: usize, field: &str, value: f64, min: f64, max: f64) -> Result<(), String> {
+    if value.is_finite() && (min..=max).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "osc{}_{field} must be within {min}..={max}",
+            index + 1
+        ))
     }
 }
 
@@ -150,23 +160,14 @@ fn check_range(name: &str, value: f64, min: f64, max: f64) -> Result<(), String>
 impl Default for Patch {
     fn default() -> Self {
         Self {
-            osc1_waveform: Waveform::Saw,
-            osc1_octave: 0,
-            osc1_semitone: 0,
-            osc1_detune_ct: 0.0,
-            osc1_level: 1.0,
-
-            osc2_waveform: Waveform::Saw,
-            osc2_octave: 0,
-            osc2_semitone: 0,
-            osc2_detune_ct: 0.0,
-            osc2_level: 0.0,
-
-            osc3_waveform: Waveform::Saw,
-            osc3_octave: 0,
-            osc3_semitone: 0,
-            osc3_detune_ct: 0.0,
-            osc3_level: 0.0,
+            oscillators: [
+                OscParams {
+                    level: 1.0,
+                    ..Default::default()
+                },
+                OscParams::default(),
+                OscParams::default(),
+            ],
 
             noise_level: 0.0,
 
@@ -202,6 +203,56 @@ impl Default for Patch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oscillator_bounds_and_order() {
+        for index in 0..3 {
+            for (field, value, min, max) in [
+                ("detune_ct", f64::NAN, -100, 100),
+                ("level", 1.1, 0, 1),
+                ("octave", 3.0, -2, 2),
+                ("semitone", 13.0, -12, 12),
+            ] {
+                let mut patch = Patch::default();
+                let osc = &mut patch.oscillators[index];
+                match field {
+                    "detune_ct" => osc.detune_ct = value,
+                    "level" => osc.level = value,
+                    "octave" => osc.octave = value as i8,
+                    "semitone" => osc.semitone = value as i8,
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    patch.validate().unwrap_err(),
+                    format!("osc{}_{field} must be within {min}..={max}", index + 1)
+                );
+            }
+        }
+        let mut patch = Patch::default();
+        patch.oscillators[0].semitone = 13;
+        patch.oscillators[2].octave = 3;
+        patch.amp_env.release = -1.0;
+        patch.oscillators[1].level = 2.0;
+        assert_eq!(
+            patch.validate().unwrap_err(),
+            "osc2_level must be within 0..=1"
+        );
+        patch.oscillators[1].level = 0.0;
+        assert_eq!(
+            patch.validate().unwrap_err(),
+            "amp_env.release must be within 0..=10"
+        );
+        patch.amp_env.release = 0.2;
+        assert_eq!(
+            patch.validate().unwrap_err(),
+            "osc3_octave must be within -2..=2"
+        );
+        patch.oscillators[2].octave = 0;
+        assert_eq!(
+            patch.validate().unwrap_err(),
+            "osc1_semitone must be within -12..=12"
+        );
+    }
 
     #[test]
     fn rejects_runtime_controls() {

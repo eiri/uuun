@@ -10,30 +10,36 @@ use dsp::{
     glide::GlideType,
     lfo::{LfoDest, LfoWaveform},
     oscillator::Waveform,
-    patch::Patch,
+    patch::{OscParams, Patch},
 };
 use engine::audio::Engine;
 use midi::{MidiManager, router::MidiRouter};
 
 fn main() {
     let patch = Patch {
-        osc1_waveform: Waveform::Saw,
-        osc1_octave: 0,
-        osc1_semitone: 0,
-        osc1_detune_ct: 0.0,
-        osc1_level: 1.0,
-
-        osc2_waveform: Waveform::Saw,
-        osc2_octave: 0,
-        osc2_semitone: 0,
-        osc2_detune_ct: 7.0,
-        osc2_level: 0.7,
-
-        osc3_waveform: Waveform::Square,
-        osc3_octave: -1,
-        osc3_semitone: 0,
-        osc3_detune_ct: 0.0,
-        osc3_level: 0.5,
+        oscillators: [
+            OscParams {
+                waveform: Waveform::Saw,
+                octave: 0,
+                semitone: 0,
+                detune_ct: 0.0,
+                level: 1.0,
+            },
+            OscParams {
+                waveform: Waveform::Saw,
+                octave: 0,
+                semitone: 0,
+                detune_ct: 7.0,
+                level: 0.7,
+            },
+            OscParams {
+                waveform: Waveform::Square,
+                octave: -1,
+                semitone: 0,
+                detune_ct: 0.0,
+                level: 0.5,
+            },
+        ],
 
         noise_level: 0.0,
 

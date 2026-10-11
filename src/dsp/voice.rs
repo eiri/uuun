@@ -32,9 +32,7 @@ pub struct Voice {
     pub(crate) status: VoiceStatus,
     pub(crate) midi_note: u8,
 
-    osc1: Oscillator,
-    osc2: Oscillator,
-    osc3: Oscillator,
+    oscillators: [Oscillator; 3],
     noise: NoiseGen,
     filter: MoogFilter,
     amp_env: Envelope,
@@ -62,9 +60,7 @@ impl Voice {
             status: VoiceStatus::Idle,
             midi_note: 0,
 
-            osc1: Oscillator::new(),
-            osc2: Oscillator::new(),
-            osc3: Oscillator::new(),
+            oscillators: std::array::from_fn(|_| Oscillator::new()),
             noise: NoiseGen::new(),
             filter: MoogFilter::new(sample_rate),
             amp_env: Envelope::new(sample_rate),
@@ -115,9 +111,9 @@ impl Voice {
         self.lfo.reset();
 
         // Reset oscillator phases on new note.
-        self.osc1.reset();
-        self.osc2.reset();
-        self.osc3.reset();
+        for oscillator in &mut self.oscillators {
+            oscillator.reset();
+        }
     }
 
     /// Begin note release.
@@ -170,7 +166,7 @@ impl Voice {
             0.0
         };
 
-        let source_level = p.osc1_level + p.osc2_level + p.osc3_level + p.noise_level;
+        let source_level = p.oscillators.iter().map(|osc| osc.level).sum::<f64>() + p.noise_level;
         let source_gain = 1.0 / source_level.max(1.0);
 
         let mut mix_buf = [0.0_f64; 512];
@@ -191,33 +187,19 @@ impl Voice {
             };
             let bp = base * pitch_factor;
 
-            let mut s1 = [0.0_f64; 1];
-            let mut s2 = [0.0_f64; 1];
-            let mut s3 = [0.0_f64; 1];
-            self.osc1.process(
-                &mut s1,
-                1,
-                apply_pitch_offset(bp, p.osc1_octave, p.osc1_semitone, p.osc1_detune_ct),
-                p.osc1_waveform,
-                self.sample_rate,
-            );
-            self.osc2.process(
-                &mut s2,
-                1,
-                apply_pitch_offset(bp, p.osc2_octave, p.osc2_semitone, p.osc2_detune_ct),
-                p.osc2_waveform,
-                self.sample_rate,
-            );
-            self.osc3.process(
-                &mut s3,
-                1,
-                apply_pitch_offset(bp, p.osc3_octave, p.osc3_semitone, p.osc3_detune_ct),
-                p.osc3_waveform,
-                self.sample_rate,
-            );
-
-            mix_buf[i] =
-                (s1[0] * p.osc1_level + s2[0] * p.osc2_level + s3[0] * p.osc3_level) * source_gain;
+            let mut mix = 0.0;
+            for (oscillator, params) in self.oscillators.iter_mut().zip(&p.oscillators) {
+                let mut sample = [0.0; 1];
+                oscillator.process(
+                    &mut sample,
+                    1,
+                    apply_pitch_offset(bp, params.octave, params.semitone, params.detune_ct),
+                    params.waveform,
+                    self.sample_rate,
+                );
+                mix += sample[0] * params.level;
+            }
+            mix_buf[i] = mix * source_gain;
         }
 
         if p.noise_level > 1e-6 {
@@ -278,25 +260,34 @@ mod tests {
         envelope::AdsrParams,
         lfo::{LfoDest, LfoWaveform},
         oscillator::Waveform,
+        patch::OscParams,
     };
 
     fn bass_patch() -> Patch {
         Patch {
-            osc1_waveform: Waveform::Saw,
-            osc1_octave: 0,
-            osc1_semitone: 0,
-            osc1_detune_ct: 0.0,
-            osc1_level: 1.0,
-            osc2_waveform: Waveform::Saw,
-            osc2_octave: 0,
-            osc2_semitone: 0,
-            osc2_detune_ct: 7.0,
-            osc2_level: 0.7,
-            osc3_waveform: Waveform::Square,
-            osc3_octave: -1,
-            osc3_semitone: 0,
-            osc3_detune_ct: 0.0,
-            osc3_level: 0.5,
+            oscillators: [
+                OscParams {
+                    waveform: Waveform::Saw,
+                    octave: 0,
+                    semitone: 0,
+                    detune_ct: 0.0,
+                    level: 1.0,
+                },
+                OscParams {
+                    waveform: Waveform::Saw,
+                    octave: 0,
+                    semitone: 0,
+                    detune_ct: 7.0,
+                    level: 0.7,
+                },
+                OscParams {
+                    waveform: Waveform::Square,
+                    octave: -1,
+                    semitone: 0,
+                    detune_ct: 0.0,
+                    level: 0.5,
+                },
+            ],
             noise_level: 0.0,
             filter_cutoff_hz: 800.0,
             filter_resonance: 0.3,
@@ -395,10 +386,8 @@ mod tests {
     fn set_patch_updates_timbre() {
         let sr = 48_000.0;
         let saw = bass_patch();
-        let square = Patch {
-            osc1_waveform: Waveform::Square,
-            ..saw
-        };
+        let mut square = saw;
+        square.oscillators[0].waveform = Waveform::Square;
         let mut unchanged = Voice::new(&saw, sr);
         let mut changed = Voice::new(&saw, sr);
         unchanged.note_on(60, 100, &saw);
@@ -453,20 +442,11 @@ mod tests {
     #[test]
     fn source_mix_keeps_headroom() {
         let mut single = bass_patch();
-        single.osc2_level = 0.0;
-        single.osc3_level = 0.0;
+        single.oscillators[1].level = 0.0;
+        single.oscillators[2].level = 0.0;
 
         let stacked = Patch {
-            osc2_waveform: single.osc1_waveform,
-            osc2_octave: single.osc1_octave,
-            osc2_semitone: single.osc1_semitone,
-            osc2_detune_ct: single.osc1_detune_ct,
-            osc2_level: 1.0,
-            osc3_waveform: single.osc1_waveform,
-            osc3_octave: single.osc1_octave,
-            osc3_semitone: single.osc1_semitone,
-            osc3_detune_ct: single.osc1_detune_ct,
-            osc3_level: 1.0,
+            oscillators: [single.oscillators[0]; 3],
             ..single
         };
 
