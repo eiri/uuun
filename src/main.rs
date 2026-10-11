@@ -1,71 +1,13 @@
-use uuun::{dsp, engine, midi};
-
 use std::{env, thread, time::Duration};
 
-use dsp::{
-    envelope::AdsrParams,
-    glide::GlideType,
-    lfo::{LfoDest, LfoWaveform},
-    oscillator::Waveform,
-    patch::{OscParams, Patch},
+use uuun::{
+    dsp::patch::Patch,
+    engine::audio::Engine,
+    midi::{MidiManager, router::MidiRouter},
 };
-use engine::audio::Engine;
-use midi::{MidiManager, router::MidiRouter};
 
 fn main() {
-    let patch = Patch {
-        oscillators: [
-            OscParams {
-                waveform: Waveform::Saw,
-                octave: 0,
-                semitone: 0,
-                detune_ct: 0.0,
-                level: 1.0,
-            },
-            OscParams {
-                waveform: Waveform::Saw,
-                octave: 0,
-                semitone: 0,
-                detune_ct: 7.0,
-                level: 0.7,
-            },
-            OscParams {
-                waveform: Waveform::Square,
-                octave: -1,
-                semitone: 0,
-                detune_ct: 0.0,
-                level: 0.5,
-            },
-        ],
-
-        noise_level: 0.0,
-
-        filter_cutoff_hz: 3_500.0,
-        filter_resonance: 0.30,
-        filter_env_amount: 0.6,
-        filter_key_track: 0.0,
-
-        filter_env: AdsrParams {
-            attack: 0.02,
-            decay: 0.4,
-            sustain: 0.5,
-            release: 0.5,
-        },
-        amp_env: AdsrParams {
-            attack: 0.01,
-            decay: 0.15,
-            sustain: 0.80,
-            release: 0.35,
-        },
-
-        lfo_waveform: LfoWaveform::Sine,
-        lfo_rate_hz: 0.5,
-        lfo_depth: 0.2,
-        lfo_destination: LfoDest::Filter,
-
-        glide_time: 0.0,
-        glide_type: GlideType::Lcr,
-    };
+    let patch = Patch::startup();
 
     let engine = Engine::start(patch).unwrap_or_else(|e| {
         eprintln!("Failed to start audio engine: {e}");

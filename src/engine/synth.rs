@@ -81,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn arbitrary_lengths_and_channels() {
+    fn lengths_and_channels() {
         for length in [0, 1, 64, 256, 513, 1024] {
             let mut synth = Synth::new(Patch::default(), 48_000.0);
             synth.handle(EngineMessage {

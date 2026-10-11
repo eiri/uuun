@@ -67,6 +67,45 @@ pub struct Patch {
 }
 
 impl Patch {
+    /// The startup sound, distinct from the default single-oscillator patch.
+    pub fn startup() -> Self {
+        let default = Self::default();
+        Self {
+            oscillators: [
+                default.oscillators[0],
+                OscParams {
+                    detune_ct: 7.0,
+                    level: 0.7,
+                    ..OscParams::default()
+                },
+                OscParams {
+                    waveform: Waveform::Square,
+                    octave: -1,
+                    level: 0.5,
+                    ..OscParams::default()
+                },
+            ],
+            filter_cutoff_hz: 3_500.0,
+            filter_resonance: 0.30,
+            filter_env_amount: 0.6,
+            filter_env: AdsrParams {
+                attack: 0.02,
+                decay: 0.4,
+                sustain: 0.5,
+                release: 0.5,
+            },
+            amp_env: AdsrParams {
+                attack: 0.01,
+                decay: 0.15,
+                sustain: 0.80,
+                release: 0.35,
+            },
+            lfo_rate_hz: 0.5,
+            lfo_depth: 0.2,
+            ..default
+        }
+    }
+
     /// Set a patch control; return false for channel-owned runtime controls.
     pub fn set_control(&mut self, control: Control, value: f64) -> bool {
         match control {
@@ -182,12 +221,7 @@ impl Default for Patch {
                 sustain: 0.5,
                 release: 0.3,
             },
-            amp_env: AdsrParams {
-                attack: 0.005,
-                decay: 0.1,
-                sustain: 0.8,
-                release: 0.2,
-            },
+            amp_env: AdsrParams::default(),
 
             lfo_waveform: LfoWaveform::Sine,
             lfo_rate_hz: 1.0,
@@ -203,6 +237,74 @@ impl Default for Patch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presets_have_explicit_values() {
+        for (patch, osc_expected, expected) in [
+            (
+                Patch::default(),
+                [
+                    (Waveform::Saw, 0, 0, 0.0, 1.0),
+                    (Waveform::Saw, 0, 0, 0.0, 0.0),
+                    (Waveform::Saw, 0, 0, 0.0, 0.0),
+                ],
+                [
+                    0.0, 2_000.0, 0.2, 0.0, 0.0, 0.01, 0.3, 0.5, 0.3, 0.005, 0.1, 0.8, 0.2, 1.0,
+                    0.0, 0.0,
+                ],
+            ),
+            (
+                Patch::startup(),
+                [
+                    (Waveform::Saw, 0, 0, 0.0, 1.0),
+                    (Waveform::Saw, 0, 0, 7.0, 0.7),
+                    (Waveform::Square, -1, 0, 0.0, 0.5),
+                ],
+                [
+                    0.0, 3_500.0, 0.3, 0.6, 0.0, 0.02, 0.4, 0.5, 0.5, 0.01, 0.15, 0.8, 0.35, 0.5,
+                    0.2, 0.0,
+                ],
+            ),
+        ] {
+            assert!(patch.validate().is_ok());
+            for (osc, expected) in patch.oscillators.into_iter().zip(osc_expected) {
+                assert_eq!(
+                    (
+                        osc.waveform,
+                        osc.octave,
+                        osc.semitone,
+                        osc.detune_ct,
+                        osc.level
+                    ),
+                    expected
+                );
+            }
+            assert_eq!(
+                [
+                    patch.noise_level,
+                    patch.filter_cutoff_hz,
+                    patch.filter_resonance,
+                    patch.filter_env_amount,
+                    patch.filter_key_track,
+                    patch.filter_env.attack,
+                    patch.filter_env.decay,
+                    patch.filter_env.sustain,
+                    patch.filter_env.release,
+                    patch.amp_env.attack,
+                    patch.amp_env.decay,
+                    patch.amp_env.sustain,
+                    patch.amp_env.release,
+                    patch.lfo_rate_hz,
+                    patch.lfo_depth,
+                    patch.glide_time,
+                ],
+                expected
+            );
+            assert_eq!(patch.lfo_waveform, LfoWaveform::Sine);
+            assert_eq!(patch.lfo_destination, LfoDest::Filter);
+            assert_eq!(patch.glide_type, GlideType::Lcr);
+        }
+    }
 
     #[test]
     fn oscillator_bounds_and_order() {

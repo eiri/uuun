@@ -53,6 +53,10 @@ The synth uses the default output device. It asks for a 256-frame buffer and fal
 
 ## Development
 
+The binary and the callback benchmark use the `uuun` library in the same package. `Synth` handles events and renders mono audio without devices. `AudioCallback` drains the event queue and control mailboxes, then converts that audio for the device. CPAL and midir handle audio output and MIDI input.
+
+Each channel owns its patch, pitch bend, and pressure. Voices borrow these values during each render call. `Patch::startup()` selects the startup sound. `Patch::default()` selects a distinct single-oscillator sound.
+
 ```sh
 make test
 make lint

@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reset_preserves_patch_mailboxes() {
+    fn reset_preserves_patch() {
         let (tx, rx) = mpsc::sync_channel(2);
         let controls = Arc::new(Controls::new());
         let router = MidiRouter::new(tx, Arc::clone(&controls));
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_unsupported_channels_and_ccs() {
+    fn ignores_unsupported_input() {
         let (tx, rx) = mpsc::sync_channel(8);
         let controls = Arc::new(Controls::new());
         let router = MidiRouter::new(tx, Arc::clone(&controls));

@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn patch_controls_reach_new_notes() {
+    fn patch_controls_on_new_notes() {
         let mut changed = Channel::new(Patch::default(), 48_000.0);
         changed.control(Control::FilterCutoff, 200.0);
         let mut expected = Channel::new(

@@ -225,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn callback_handles_empty_and_small_output() {
+    fn empty_and_small_output() {
         for length in [0, 1, 2, 3, 64] {
             let mut output = vec![f32::NAN; length];
             render(&mut output);

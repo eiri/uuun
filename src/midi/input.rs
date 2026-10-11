@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_other_and_malformed_messages() {
+    fn ignores_invalid_and_other() {
         for bytes in [
             &[0xc0, 10][..],
             &[0xa0, 60, 10],
