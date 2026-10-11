@@ -58,20 +58,6 @@ impl Lfo {
 
         value
     }
-
-    /// Fill `out[..n]` with raw LFO values ([-1, 1]).
-    pub fn process(
-        &mut self,
-        out: &mut [f64],
-        n: usize,
-        rate_hz: f64,
-        sample_rate: f64,
-        waveform: LfoWaveform,
-    ) {
-        for s in out[..n].iter_mut() {
-            *s = self.tick(rate_hz, sample_rate, waveform);
-        }
-    }
 }
 
 impl Default for Lfo {

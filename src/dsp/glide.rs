@@ -92,12 +92,6 @@ impl Glide {
 
         2.0_f64.powf(self.current_log2)
     }
-
-    pub fn process(&mut self, freq_buf: &mut [f64], n: usize) {
-        for sample in freq_buf[..n].iter_mut() {
-            *sample = self.tick();
-        }
-    }
 }
 
 impl Default for Glide {

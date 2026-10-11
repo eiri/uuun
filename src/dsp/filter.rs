@@ -64,19 +64,6 @@ impl MoogFilter {
 
         new_y3
     }
-
-    pub fn process(
-        &mut self,
-        input_buf: &[f64],
-        cutoff_buf: &[f64],
-        resonance: f64,
-        out_buf: &mut [f64],
-        n: usize,
-    ) {
-        for i in 0..n {
-            out_buf[i] += self.tick(input_buf[i], cutoff_buf[i], resonance);
-        }
-    }
 }
 
 /// Fast tanh (hyperbolic tangent) approximation (Pade 3/3 rational)

@@ -60,10 +60,10 @@ impl VoiceAllocator {
         }
     }
 
-    pub fn process(&mut self, out_buf: &mut [f64], n: usize, params: RenderParams<'_>) {
+    pub fn process(&mut self, out_buf: &mut [f64], params: RenderParams<'_>) {
         for v in self.voices.iter_mut() {
             if v.status != VoiceStatus::Idle {
-                v.process(out_buf, n, params);
+                v.process(out_buf, params);
             }
         }
     }
@@ -219,7 +219,6 @@ mod tests {
         let mut buf = [0.0_f64; 128];
         alloc.process(
             &mut buf,
-            128,
             RenderParams {
                 patch: &p,
                 pitch_bend: 0.0,
@@ -254,7 +253,6 @@ mod tests {
         let mut buf = [0.0_f64; 128];
         alloc.process(
             &mut buf,
-            128,
             RenderParams {
                 patch: &p,
                 pitch_bend: 0.0,

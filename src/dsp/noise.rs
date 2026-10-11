@@ -40,13 +40,6 @@ impl NoiseGen {
     pub fn white(&mut self) -> f64 {
         self.rng.next_f64()
     }
-
-    /// Fill `buf[..n]` by accumulating white noise scaled by `level`.
-    pub fn process_white(&mut self, buf: &mut [f64], n: usize, level: f64) {
-        for s in buf[..n].iter_mut() {
-            *s += self.white() * level;
-        }
-    }
 }
 
 impl Default for NoiseGen {
